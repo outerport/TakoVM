@@ -1,0 +1,43 @@
+{
+  "job_types": [
+    {
+      "name": "default",
+      "requirements": [],
+      "python_version": "3.11",
+      "base_image": null,
+      "shared_code": [],
+      "environment": {},
+      "memory_limit": "512m",
+      "cpu_limit": 1.0,
+      "timeout": 30
+    },
+    {
+      "name": "data-processing",
+      "requirements": [
+        "pandas",
+        "numpy"
+      ],
+      "python_version": "3.11",
+      "base_image": null,
+      "shared_code": [],
+      "environment": {},
+      "memory_limit": "1g",
+      "cpu_limit": 2.0,
+      "timeout": 60
+    },
+    {
+      "name": "ml-inference",
+      "requirements": [
+        "numpy",
+        "scikit-learn"
+      ],
+      "python_version": "3.11",
+      "base_image": null,
+      "shared_code": [],
+      "environment": {},
+      "memory_limit": "2g",
+      "cpu_limit": 2.0,
+      "timeout": 120
+    }
+  ]
+}

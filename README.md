@@ -1,36 +1,45 @@
-# Secure Code Executor
+# Tako VM - Secure Code Executor
 
-A secure, isolated Python code execution system that runs AI-generated code in containerized environments with strict security controls.
+A secure, isolated Python code execution system that runs AI-generated code in containerized environments.
 
 ## Overview
 
-This system executes untrusted Python code in isolated Docker containers with:
-- No network access
-- Read-only code and input mounts
-- Strict resource limits (512MB RAM, 1 CPU, configurable timeout)
-- Complete filesystem isolation
-- Custom library support
+Tako VM executes untrusted Python code in isolated Docker containers with:
+- Complete network isolation
+- Read-only filesystem
+- Configurable resource limits
+- **Execution Environments** - Pre-configured containers with different dependencies
+- **Typed SDK** - Execute Python functions with dataclass input/output
 
-## Architecture
+## What is an Execution Environment?
+
+An **execution environment** (internally called "job type") is a pre-configured Docker container with specific Python packages installed. Instead of installing packages at runtime (slow), you define environments upfront:
+
+| Environment | Pre-installed Packages | Use Case |
+|-------------|----------------------|----------|
+| `default` | Python stdlib only | Simple scripts, no dependencies |
+| `data-processing` | pandas, numpy | Data manipulation |
+| `ml-inference` | numpy, scikit-learn | Machine learning |
+
+**Key benefit**: Containers are built once and reused. Each execution spawns a fresh container instance from the pre-built image (~100ms startup), not a fresh build.
 
 ```
-Client → HTTP API (FastAPI) → Worker Process → Docker Container (Isolated Execution)
-                                    ↓
-                            Temp Workspace:
-                            - /code (read-only)
-                            - /input (read-only)
-                            - /output (read-write)
+BUILD (one-time)                    EXECUTE (per-request, fast)
+────────────────                    ────────────────────────────
+Build image with pandas/numpy  →    Spawn container instance
+                                    Execute code
+                                    Return results
+                                    Destroy container
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker 20.10+ installed and running
+- Docker 20.10+
 - Python 3.11+
-- Linux (recommended) or macOS with Docker Desktop
 
-### 1. Build the Docker Image
+### 1. Build the Default Container
 
 ```bash
 docker build -t code-executor:latest .
@@ -42,292 +51,176 @@ docker build -t code-executor:latest .
 pip install -r requirements.txt
 ```
 
-### 3. Start the API Server
+### 3. Start the Server
 
 ```bash
-python api_server.py
+python run_server.py
 ```
 
-The API will be available at http://localhost:8000
+### 4. Run an Example
 
-### 4. View API Documentation
+```bash
+python examples/example_tako_vm.py
+```
 
-Open http://localhost:8000/docs in your browser for interactive API documentation.
+## Usage
 
-### 5. Test the API
+### Typed SDK (Recommended)
 
-Using curl:
+```python
+from dataclasses import dataclass
+import tako_vm
+
+@dataclass
+class Input:
+    x: int
+    y: int
+
+@dataclass
+class Output:
+    result: int
+
+def add(input: Input) -> Output:
+    return Output(result=input.x + input.y)
+
+# Execute in isolated container
+result = tako_vm.send(add, Input(x=10, y=20))
+print(result.result)  # 30
+```
+
+### Using Different Environments
+
+```python
+import tako_vm
+from dataclasses import dataclass
+
+@dataclass
+class StatsInput:
+    values: list
+
+@dataclass
+class StatsOutput:
+    mean: float
+
+def compute_mean(input: StatsInput) -> StatsOutput:
+    import numpy as np  # Available in data-processing environment
+    return StatsOutput(mean=float(np.mean(input.values)))
+
+# Uses the data-processing environment (has numpy)
+result = tako_vm.send(compute_mean, StatsInput([1,2,3,4,5]), job_type="data-processing")
+```
+
+**Note**: If the environment's container doesn't exist, Tako VM will automatically build it on first use.
+
+### Raw API
+
 ```bash
 curl -X POST http://localhost:8000/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "code": "import json\nwith open(\"/input/data.json\") as f: data=json.load(f)\nresult = {k: v*2 for k,v in data.items()}\nwith open(\"/output/result.json\", \"w\") as f: json.dump(result, f)",
+    "code": "import json\nwith open(\"/input/data.json\") as f: data=json.load(f)\nresult = {\"sum\": data[\"x\"] + data[\"y\"]}\nwith open(\"/output/result.json\", \"w\") as f: json.dump(result, f)",
     "input_data": {"x": 10, "y": 20}
   }'
 ```
 
-Using Python:
-```bash
-python example_api_client.py
+## Creating Custom Environments
+
+```python
+from src.job_types import JobType, JobTypeRegistry
+
+registry = JobTypeRegistry()
+registry.register(JobType(
+    name="web-scraping",
+    requirements=["requests", "beautifulsoup4"],
+    memory_limit="1g",
+    timeout=60,
+))
+
+# The container will be auto-built on first use
 ```
 
 ## API Reference
 
 ### POST /execute
 
-Execute Python code in an isolated container.
+Execute Python code.
 
-**Request:**
 ```json
 {
-  "code": "python code as string",
-  "input_data": {
-    "key": "value"
-  },
-  "timeout": 30
+  "code": "...",
+  "input_data": {},
+  "timeout": 30,
+  "job_type": "data-processing"
 }
 ```
 
-**Response (Success):**
-```json
-{
-  "success": true,
-  "output": {
-    "result": "processed data"
-  },
-  "execution_time": 1.23,
-  "stdout": "Processing complete!",
-  "stderr": ""
-}
-```
+### GET /job-types
 
-**Response (Failure):**
-```json
-{
-  "success": false,
-  "error": "timeout exceeded",
-  "stdout": "",
-  "stderr": "error messages",
-  "exit_code": 137
-}
-```
+List available execution environments.
 
 ### GET /health
 
-Health check endpoint.
+Health check.
 
-**Response:**
-```json
-{
-  "status": "healthy",
-  "docker_available": true,
-  "version": "1.0.0"
-}
-```
-
-## Security Features
-
-✅ **Complete Network Isolation** - No external connections possible  
-✅ **Read-Only Filesystem** - Cannot modify system files  
-✅ **Resource Limits** - CPU, memory, process limits enforced  
-✅ **Timeout Protection** - Jobs killed after timeout  
-✅ **Non-Root Execution** - Runs as unprivileged user  
-✅ **Capability Dropping** - No special Linux capabilities  
-✅ **Ephemeral Containers** - Destroyed after each execution  
-
-## Limitations
-
-This is a POC with several important limitations:
-
-**Resource Constraints**: 512MB RAM, 1 CPU, 30s timeout (configurable up to 5min)  
-**No Network Access**: Completely isolated, cannot make HTTP requests  
-**No Direct Database**: Data must be passed via JSON input  
-**Synchronous Only**: API blocks until execution completes  
-**No Authentication**: Anyone with network access can execute code  
-**Sequential Processing**: One job at a time  
-
-For complete details, see [LIMITATIONS.md](LIMITATIONS.md)
-
-**Production Readiness**: This POC is suitable for:
-- ✅ Development and testing
-- ✅ Internal tools with low throughput
-- ✅ Proof of concept demonstrations
-
-**Not suitable for**:
-- ❌ Public-facing production services (without auth)
-- ❌ High-throughput workloads (>100 jobs/hour)
-- ❌ Long-running batch processing (>5min)
-- ❌ Highly sensitive data (no encryption at rest)
-
-## Custom Libraries
-
-To add your own Python libraries:
-
-1. Place wheel files (`.whl`) in the `custom_libs/` directory
-2. Rebuild the Docker image: `docker build -t code-executor:latest .`
-3. Restart the API server
-
-Example:
-```bash
-# Build your library
-cd my_library
-python setup.py bdist_wheel
-cp dist/*.whl ../custom_libs/
-
-# Rebuild image
-docker build -t code-executor:latest .
-```
-
-## Testing
-
-Run the test suite:
-
-```bash
-# Install test dependencies
-pip install -r dev-requirements.txt
-
-# Run unit tests
-pytest test_executor.py -v
-
-# Run API tests
-pytest test_api.py -v
-
-# Run limitation tests
-pytest test_limitations.py -v
-
-# Run all tests
-pytest -v
-```
-
-## Code Execution Examples
-
-### Example 1: Simple Data Transformation
+## SDK Reference
 
 ```python
-code = """
-import json
+# Execute function, returns typed output
+tako_vm.send(func, input_data, timeout=None, job_type=None) -> OutputT
 
-with open('/input/data.json') as f:
-    data = json.load(f)
+# Execute function, returns raw result (doesn't raise on failure)
+tako_vm.send_raw(func, input_data, timeout=None, job_type=None) -> ExecutionResult
 
-result = {k: v * 2 for k, v in data.items()}
+# List available environments
+tako_vm.list_job_types() -> list
 
-with open('/output/result.json', 'w') as f:
-    json.dump(result, f)
-
-print("Transformation complete!")
-"""
-
-response = requests.post('http://localhost:8000/execute', json={
-    'code': code,
-    'input_data': {'a': 1, 'b': 2, 'c': 3}
-})
+# Configure client
+tako_vm.configure(base_url="http://localhost:8000", timeout=30)
 ```
 
-### Example 2: Using Custom Libraries
+## Security
 
-```python
-code = """
-import json
-from example_lib import DataClass
-
-with open('/input/data.json') as f:
-    data = json.load(f)
-
-obj = DataClass.from_dict(data)
-transformed = obj.transform()
-
-with open('/output/result.json', 'w') as f:
-    json.dump(transformed.to_dict(), f)
-"""
-
-response = requests.post('http://localhost:8000/execute', json={
-    'code': code,
-    'input_data': {'x': 10, 'y': 20}
-})
-```
-
-## Deployment
-
-### Development
-```bash
-# Run with auto-reload
-uvicorn api_server:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Production (Future)
-```bash
-# Using gunicorn with multiple workers
-gunicorn api_server:app \
-  --workers 4 \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:8000
-```
-
-## Troubleshooting
-
-### Docker Not Available
-```
-Error: Cannot connect to Docker daemon
-```
-**Solution**: Ensure Docker is running: `docker info`
-
-### Permission Denied
-```
-Error: Permission denied while trying to connect to Docker
-```
-**Solution**: Add user to docker group: `sudo usermod -aG docker $USER` (logout/login required)
-
-### Container Creation Fails
-```
-Error: Container failed to start
-```
-**Solution**: Check Docker logs: `docker logs <container_id>`
-
-### Timeout Issues
-```
-Error: Execution timeout exceeded
-```
-**Solution**: Increase timeout in request or optimize code to run faster
+| Feature | Description |
+|---------|-------------|
+| Network Isolation | `--network=none` |
+| Read-Only Filesystem | `--read-only` |
+| Resource Limits | Memory, CPU per environment |
+| Non-Root | Runs as `sandbox` user |
+| Ephemeral | Container destroyed after each execution |
 
 ## Project Structure
 
 ```
-secure-code-executor/
-├── Dockerfile                  # Container image definition
-├── README.md                   # This file
-├── LIMITATIONS.md              # Detailed limitations
-├── requirements.txt            # API server dependencies
-├── dev-requirements.txt        # Development/testing dependencies
-├── .gitignore                  # Git ignore rules
-├── .dockerignore              # Docker build ignore rules
-├── api_server.py              # FastAPI HTTP server
-├── worker.py                  # Core execution orchestrator
-├── example_api_client.py      # Example API usage
-├── example_usage.py           # Direct worker usage example
-├── test_executor.py           # Unit tests for worker
-├── test_api.py               # API integration tests
-├── test_limitations.py        # Limitation enforcement tests
+tako-vm/
+├── src/                       # Core source code
+│   ├── api_server.py          # FastAPI HTTP server
+│   ├── worker.py              # Docker execution orchestrator
+│   ├── tako_vm.py             # Typed Python SDK
+│   ├── job_types.py           # Environment configuration
+│   └── container_builder.py   # Docker image builder
+├── tests/                     # Test files
+├── examples/                  # Example scripts
+│   ├── example_tako_vm.py     # SDK usage examples
+│   └── example_api_client.py  # Raw API examples
 ├── custom_libs/               # Custom Python libraries
-│   └── example_lib/          # Example library
-└── examples/                  # Example code templates
-    └── example_generated_code.py
+├── Dockerfile                 # Base container image
+├── run_server.py              # Server entry point
+├── tako_vm.py                 # SDK re-export for convenience
+├── requirements.txt           # Dependencies
+└── README.md
 ```
 
-## Contributing
+## Limitations
 
-This is a POC. For production use, consider adding:
-- Authentication/authorization
-- Rate limiting
-- Job queue for async execution
-- Result persistence
-- gVisor runtime for enhanced isolation
-- Monitoring and metrics
+| Limitation | Details |
+|------------|---------|
+| No Network | Containers cannot make network requests |
+| Sequential | One job at a time |
+| No Auth | Anyone with access can execute code |
+| Stdlib Types | SDK only supports JSON-serializable dataclasses |
+
+See [LIMITATIONS.md](LIMITATIONS.md) for details.
 
 ## License
 
-[Your License Here]
-
-## Contact
-
-[Your Contact Information]
+MIT

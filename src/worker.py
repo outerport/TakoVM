@@ -9,35 +9,95 @@ import shutil
 from pathlib import Path
 import time
 import logging
+from typing import Optional
+
+from src.job_types import JobType, JobTypeRegistry
 
 logger = logging.getLogger(__name__)
 
 
+# Default job type for backward compatibility
+DEFAULT_JOB_TYPE = JobType(
+    name="default",
+    requirements=[],
+    memory_limit="512m",
+    cpu_limit=1.0,
+    timeout=30,
+)
+
+
 class CodeExecutor:
     """Execute Python code in isolated Docker containers."""
-    
-    def __init__(self, docker_image="code-executor:latest", default_timeout=30):
+
+    def __init__(
+        self,
+        docker_image: str = "code-executor:latest",
+        default_timeout: int = 30,
+        registry: Optional[JobTypeRegistry] = None
+    ):
         """
         Initialize the executor.
-        
+
         Args:
-            docker_image: Name of the Docker image to use
+            docker_image: Default Docker image to use (for backward compatibility)
             default_timeout: Default timeout in seconds for executions
+            registry: Job type registry for looking up job types
         """
         self.docker_image = docker_image
         self.default_timeout = default_timeout
+        self.registry = registry or JobTypeRegistry()
     
+    def _auto_build_image(self, job_type: JobType) -> bool:
+        """
+        Automatically build a container image for a job type.
+
+        Args:
+            job_type: Job type configuration
+
+        Returns:
+            True if build succeeded, False otherwise
+        """
+        try:
+            from src.container_builder import ContainerBuilder
+            builder = ContainerBuilder()
+            builder.build(job_type, quiet=True)
+            return True
+        except Exception as e:
+            logger.error(f"Auto-build failed for {job_type.name}: {e}")
+            return False
+
+    def _get_job_type(self, job_type_name: Optional[str]) -> JobType:
+        """
+        Get job type configuration.
+
+        Args:
+            job_type_name: Name of job type, or None for default
+
+        Returns:
+            JobType configuration
+        """
+        if job_type_name is None:
+            return DEFAULT_JOB_TYPE
+
+        job_type = self.registry.get(job_type_name)
+        if job_type is None:
+            logger.warning(f"Job type '{job_type_name}' not found, using default")
+            return DEFAULT_JOB_TYPE
+
+        return job_type
+
     def execute_job(self, job):
         """
         Execute a job in an isolated container.
-        
+
         Args:
             job: Dictionary with keys:
                 - id: Job identifier (optional)
                 - code: Python code to execute (string)
                 - input_data: Input data as dictionary
-                - timeout: Timeout in seconds (optional, uses default if not provided)
-        
+                - timeout: Timeout in seconds (optional, uses job type default)
+                - job_type: Name of job type (optional, uses "default" if not provided)
+
         Returns:
             Dictionary with execution results:
                 - success: Boolean indicating if execution succeeded
@@ -46,9 +106,15 @@ class CodeExecutor:
                 - stderr: Standard error from execution
                 - exit_code: Process exit code
                 - error: Error message (if failed)
+                - job_type: Name of job type used
         """
         job_id = job.get("id", int(time.time()))
-        timeout = job.get("timeout", self.default_timeout)
+
+        # Get job type configuration
+        job_type = self._get_job_type(job.get("job_type"))
+
+        # Use job-specific timeout, or job type default
+        timeout = job.get("timeout", job_type.timeout)
         
         # Create temporary workspace
         workspace = Path(tempfile.mkdtemp(prefix=f"job-{job_id}-"))
@@ -78,8 +144,12 @@ class CodeExecutor:
                 code_dir=code_dir,
                 input_dir=input_dir,
                 output_dir=output_dir,
-                timeout=timeout
+                timeout=timeout,
+                job_type=job_type
             )
+
+            # Add job type info to result
+            result["job_type"] = job_type.name
             
             # Read output
             output_file = output_dir / "result.json"
@@ -97,19 +167,51 @@ class CodeExecutor:
             # Cleanup
             shutil.rmtree(workspace, ignore_errors=True)
     
-    def _run_container(self, code_dir, input_dir, output_dir, timeout):
+    def _run_container(
+        self,
+        code_dir: Path,
+        input_dir: Path,
+        output_dir: Path,
+        timeout: int,
+        job_type: JobType
+    ):
         """
         Run Docker container with security restrictions.
-        
+
         Args:
             code_dir: Path to directory containing code (will be mounted read-only)
             input_dir: Path to directory containing input data (will be mounted read-only)
             output_dir: Path to directory for output (will be mounted read-write)
             timeout: Timeout in seconds
-        
+            job_type: Job type configuration for container settings
+
         Returns:
             Dictionary with execution results
         """
+        # Determine which image to use
+        # If job type has a specific image built, use it; otherwise fall back to default
+        image_name = job_type.image_name if job_type.name != "default" else self.docker_image
+
+        # Check if job type image exists
+        try:
+            check = subprocess.run(
+                ["docker", "image", "inspect", image_name],
+                capture_output=True
+            )
+            if check.returncode != 0:
+                # Image doesn't exist - try to auto-build it
+                if job_type.name != "default":
+                    logger.info(f"Image {image_name} not found, attempting auto-build...")
+                    if self._auto_build_image(job_type):
+                        logger.info(f"Successfully built {image_name}")
+                    else:
+                        logger.warning(f"Failed to build {image_name}, using default")
+                        image_name = self.docker_image
+                else:
+                    image_name = self.docker_image
+        except Exception:
+            image_name = self.docker_image
+
         cmd = [
             "docker", "run",
             "--rm",                                 # Remove container after execution
@@ -117,22 +219,26 @@ class CodeExecutor:
             "--read-only",                          # Read-only root filesystem
             "--cap-drop=ALL",                       # Drop all capabilities
             "--security-opt=no-new-privileges",     # Prevent privilege escalation
-            
-            # Resource limits
-            "--memory=512m",                        # Maximum 512MB RAM
-            "--memory-swap=512m",                   # No swap (same as memory limit)
-            "--cpus=1",                             # Maximum 1 CPU core
-            "--pids-limit=100",                     # Maximum 100 processes
-            
+
+            # Resource limits from job type
+            f"--memory={job_type.memory_limit}",
+            f"--memory-swap={job_type.memory_limit}",  # No swap
+            f"--cpus={job_type.cpu_limit}",
+            "--pids-limit=100",
+
             # Mounts (use absolute paths)
             f"--mount=type=bind,source={code_dir.absolute()},target=/code,readonly",
             f"--mount=type=bind,source={input_dir.absolute()},target=/input,readonly",
             f"--mount=type=bind,source={output_dir.absolute()},target=/output",
-            "--tmpfs=/tmp:rw,noexec,nosuid,size=100m",  # Temporary filesystem (100MB limit)
-            
+            "--tmpfs=/tmp:rw,noexec,nosuid,size=100m",
+
             # Image
-            self.docker_image
+            image_name
         ]
+
+        # Add environment variables from job type
+        for key, value in job_type.environment.items():
+            cmd.insert(-1, f"--env={key}={value}")
         
         try:
             result = subprocess.run(
