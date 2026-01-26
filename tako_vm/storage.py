@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from .models import ExecutionRecord, ResourceUsage, Artifact, ExecutionError, JobVersion
+from .models import ExecutionRecord, ResourceUsage, Artifact, ExecutionError, JobVersion, DeadLetterEntry
 
 
 # SQLite schema
@@ -42,7 +42,6 @@ CREATE TABLE IF NOT EXISTS execution_records (
     artifacts_json TEXT,
     error_json TEXT,
 
-    api_key_id TEXT,
     client_ip TEXT
 );
 
@@ -50,7 +49,6 @@ CREATE TABLE IF NOT EXISTS execution_records (
 CREATE INDEX IF NOT EXISTS idx_execution_status ON execution_records(status);
 CREATE INDEX IF NOT EXISTS idx_execution_job_type ON execution_records(job_type);
 CREATE INDEX IF NOT EXISTS idx_execution_created_at ON execution_records(created_at);
-CREATE INDEX IF NOT EXISTS idx_execution_api_key_id ON execution_records(api_key_id);
 
 -- Job versions table
 CREATE TABLE IF NOT EXISTS job_versions (
@@ -68,13 +66,22 @@ CREATE TABLE IF NOT EXISTS job_versions (
 CREATE INDEX IF NOT EXISTS idx_version_job_type ON job_versions(job_type_name);
 CREATE INDEX IF NOT EXISTS idx_version_tag ON job_versions(job_type_name, version_tag);
 
--- API key usage tracking for rate limiting
-CREATE TABLE IF NOT EXISTS api_key_usage (
-    key_id TEXT NOT NULL,
-    window_start TEXT NOT NULL,
-    request_count INTEGER DEFAULT 0,
-    PRIMARY KEY (key_id, window_start)
+-- Dead letter queue for failed jobs
+CREATE TABLE IF NOT EXISTS dead_letter_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    job_data_json TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    client_ip TEXT,
+    correlation_id TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_dlq_created_at ON dead_letter_queue(created_at);
+CREATE INDEX IF NOT EXISTS idx_dlq_error_type ON dead_letter_queue(error_type);
+CREATE INDEX IF NOT EXISTS idx_dlq_job_id ON dead_letter_queue(job_id);
 """
 
 
@@ -142,8 +149,8 @@ class ExecutionStorage:
                 exit_code, stdout, stderr, output_json,
                 max_rss_mb, cpu_time_ms, wall_time_ms,
                 artifacts_json, error_json,
-                api_key_id, client_ip
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                client_ip
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             record.execution_id,
             record.status,
@@ -164,7 +171,6 @@ class ExecutionStorage:
             resource_usage.wall_time_ms if resource_usage else None,
             artifacts_json,
             error_json,
-            record.api_key_id,
             record.client_ip,
         ))
         conn.commit()
@@ -194,7 +200,6 @@ class ExecutionStorage:
         self,
         status: Optional[str] = None,
         job_type: Optional[str] = None,
-        api_key_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
     ) -> List[ExecutionRecord]:
@@ -204,7 +209,6 @@ class ExecutionStorage:
         Args:
             status: Filter by status
             job_type: Filter by job type
-            api_key_id: Filter by API key
             limit: Maximum records to return
             offset: Offset for pagination
 
@@ -223,10 +227,6 @@ class ExecutionStorage:
         if job_type:
             query += " AND job_type = ?"
             params.append(job_type)
-
-        if api_key_id:
-            query += " AND api_key_id = ?"
-            params.append(api_key_id)
 
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -300,7 +300,6 @@ class ExecutionStorage:
             resource_usage=resource_usage,
             artifacts=artifacts,
             error=error,
-            api_key_id=row['api_key_id'],
             client_ip=row['client_ip'],
         )
 
@@ -405,44 +404,156 @@ class ExecutionStorage:
             image_ref=row['image_ref'],
         )
 
-    # Rate limiting methods
+    # Dead letter queue methods
 
-    def get_request_count(self, key_id: str, window_start: str) -> int:
-        """Get request count for rate limiting window."""
+    def add_to_dlq(self, entry: DeadLetterEntry) -> int:
+        """
+        Add a failed job to the dead letter queue.
+
+        Args:
+            entry: DeadLetterEntry with job details
+
+        Returns:
+            ID of the inserted entry
+        """
         conn = self._get_connection()
-        row = conn.execute(
-            "SELECT request_count FROM api_key_usage WHERE key_id = ? AND window_start = ?",
-            (key_id, window_start)
-        ).fetchone()
-
-        return row['request_count'] if row else 0
-
-    def increment_request_count(self, key_id: str, window_start: str) -> int:
-        """Increment request count for rate limiting window."""
-        conn = self._get_connection()
-        conn.execute("""
-            INSERT INTO api_key_usage (key_id, window_start, request_count)
-            VALUES (?, ?, 1)
-            ON CONFLICT(key_id, window_start)
-            DO UPDATE SET request_count = request_count + 1
-        """, (key_id, window_start))
+        cursor = conn.execute("""
+            INSERT INTO dead_letter_queue (
+                job_id, job_data_json, error_type, error_message,
+                retry_count, created_at, client_ip, correlation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            entry.job_id,
+            json.dumps(entry.job_data),
+            entry.error_type,
+            entry.error_message,
+            entry.retry_count,
+            entry.created_at.isoformat(),
+            entry.client_ip,
+            entry.correlation_id,
+        ))
         conn.commit()
+        return cursor.lastrowid
 
+    def get_dlq_entry(self, entry_id: int) -> Optional[DeadLetterEntry]:
+        """Get a DLQ entry by ID."""
+        conn = self._get_connection()
         row = conn.execute(
-            "SELECT request_count FROM api_key_usage WHERE key_id = ? AND window_start = ?",
-            (key_id, window_start)
+            "SELECT * FROM dead_letter_queue WHERE id = ?",
+            (entry_id,)
         ).fetchone()
 
-        return row['request_count']
+        if not row:
+            return None
 
-    def cleanup_old_usage(self, hours: int = 2) -> int:
-        """Clean up old rate limit tracking data."""
+        return self._row_to_dlq_entry(row)
+
+    def list_dlq_entries(
+        self,
+        error_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[DeadLetterEntry]:
+        """
+        List dead letter queue entries.
+
+        Args:
+            error_type: Filter by error type
+            limit: Maximum entries to return
+            offset: Offset for pagination
+
+        Returns:
+            List of DeadLetterEntry objects
+        """
         conn = self._get_connection()
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()[:16]
+
+        query = "SELECT * FROM dead_letter_queue WHERE 1=1"
+        params: List = []
+
+        if error_type:
+            query += " AND error_type = ?"
+            params.append(error_type)
+
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        rows = conn.execute(query, params).fetchall()
+        return [self._row_to_dlq_entry(row) for row in rows]
+
+    def remove_from_dlq(self, entry_id: int) -> bool:
+        """
+        Remove an entry from the dead letter queue.
+
+        Args:
+            entry_id: ID of entry to remove
+
+        Returns:
+            True if entry was removed
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "DELETE FROM dead_letter_queue WHERE id = ?",
+            (entry_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_dlq_stats(self) -> dict:
+        """
+        Get statistics about the dead letter queue.
+
+        Returns:
+            Dict with count, error_type breakdown, etc.
+        """
+        conn = self._get_connection()
+
+        total = conn.execute(
+            "SELECT COUNT(*) as count FROM dead_letter_queue"
+        ).fetchone()['count']
+
+        by_error = conn.execute("""
+            SELECT error_type, COUNT(*) as count
+            FROM dead_letter_queue
+            GROUP BY error_type
+            ORDER BY count DESC
+        """).fetchall()
+
+        return {
+            "total": total,
+            "by_error_type": {row['error_type']: row['count'] for row in by_error}
+        }
+
+    def cleanup_old_dlq_entries(self, ttl_days: int) -> int:
+        """
+        Delete DLQ entries older than TTL.
+
+        Args:
+            ttl_days: Days to retain entries
+
+        Returns:
+            Number of entries deleted
+        """
+        conn = self._get_connection()
+        cutoff = (datetime.utcnow() - timedelta(days=ttl_days)).isoformat()
 
         cursor = conn.execute(
-            "DELETE FROM api_key_usage WHERE window_start < ?",
+            "DELETE FROM dead_letter_queue WHERE created_at < ?",
             (cutoff,)
         )
         conn.commit()
         return cursor.rowcount
+
+    def _row_to_dlq_entry(self, row: sqlite3.Row) -> DeadLetterEntry:
+        """Convert database row to DeadLetterEntry."""
+        return DeadLetterEntry(
+            id=row['id'],
+            job_id=row['job_id'],
+            job_data=json.loads(row['job_data_json']),
+            error_type=row['error_type'],
+            error_message=row['error_message'],
+            retry_count=row['retry_count'],
+            created_at=datetime.fromisoformat(row['created_at']),
+            client_ip=row['client_ip'],
+            correlation_id=row['correlation_id'],
+        )
+

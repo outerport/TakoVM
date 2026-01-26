@@ -8,7 +8,6 @@ Create `tako_vm.yaml` in your project directory:
 
 ```yaml
 production_mode: false    # strict mode (no auto-build)
-require_auth: false       # require API key
 max_workers: 4            # concurrent execution slots
 ```
 
@@ -23,7 +22,6 @@ That's it for basic setup. Everything else has sensible defaults.
 # QUICK START
 # ==============================================================================
 production_mode: false
-require_auth: false
 max_workers: 4
 
 # ==============================================================================
@@ -103,15 +101,6 @@ export TAKO_VM_CONFIG=/path/to/config.yaml
 
 # Override data directory
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
-
-# Set API key (recommended for secrets)
-export TAKO_VM_API_KEY="tvmk_your_secret_key"
-
-# Multiple API keys
-export TAKO_VM_API_KEYS='[
-  {"name": "prod", "key": "tvmk_xxx", "rate_limit_per_minute": 100},
-  {"name": "dev", "key": "tvmk_yyy", "rate_limit_per_minute": 10}
-]'
 ```
 
 ## Job Types
@@ -173,7 +162,6 @@ print(f"Job types: {len(config.job_types)}")
 
 ```yaml
 production_mode: true     # require pre-built images
-require_auth: true        # require API keys
 max_workers: 8
 max_timeout: 60
 default_timeout: 15

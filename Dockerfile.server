@@ -17,11 +17,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install Docker CLI (to spawn executor containers via host daemon)
+# Install curl for health checks and Docker CLI for spawning containers
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    docker.io \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI from official binaries
+RUN ARCH=$(uname -m) && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-27.5.1.tgz" | \
+    tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
+    chmod +x /usr/local/bin/docker
 
 # Copy package files
 COPY pyproject.toml README.md LICENSE ./

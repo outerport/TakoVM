@@ -8,13 +8,22 @@ Complete reference for the Tako VM HTTP API.
 http://localhost:8000
 ```
 
-## Authentication
+## Headers
 
-When authentication is enabled, include the API key in the `Authorization` header:
+### Request Headers
 
-```
-Authorization: Bearer tvmk_your_api_key_here
-```
+| Header | Description |
+|--------|-------------|
+| `Content-Type` | `application/json` for all POST requests |
+| `X-Correlation-ID` | Optional. Pass your own correlation ID for tracing |
+
+### Response Headers
+
+| Header | Description |
+|--------|-------------|
+| `X-Correlation-ID` | Correlation ID for request tracing |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
 
 ---
 
@@ -82,7 +91,7 @@ Same as `/execute`.
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "pending"
+  "status": "queued"
 }
 ```
 
@@ -133,11 +142,28 @@ GET /jobs/{job_id}/result
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `timeout` | integer | 30 | Max seconds to wait |
+| `wait` | boolean | false | Wait for completion |
+| `timeout` | integer | 30 | Max seconds to wait (if wait=true) |
 
 ### Response
 
-Same format as `/execute` response.
+```json
+{
+  "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "success",
+  "job_type": "default",
+  "job_version": "latest",
+  "created_at": "2024-01-15T10:30:00Z",
+  "started_at": "2024-01-15T10:30:01Z",
+  "ended_at": "2024-01-15T10:30:02Z",
+  "duration_ms": 350,
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "output": {"sum": 30},
+  "error": null
+}
+```
 
 ---
 
@@ -153,8 +179,8 @@ POST /jobs/{job_id}/cancel
 
 ```json
 {
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "cancelled": true
+  "status": "cancelled",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -219,6 +245,34 @@ GET /job-types/{name}
 
 ---
 
+## Build Job Type
+
+Explicitly build a job type container image.
+
+```
+POST /job-types/{name}/build
+```
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `version_tag` | string | null | Semantic version tag (e.g., "v1.0.0") |
+
+### Response
+
+```json
+{
+  "status": "built",
+  "job_type": "data-processing",
+  "version": "data-processing@sha256:a1b2c3d4e5f6",
+  "digest": "a1b2c3d4e5f6",
+  "image_ref": "tako-vm-data-processing:latest"
+}
+```
+
+---
+
 ## Health Check
 
 Check server health status.
@@ -233,6 +287,12 @@ GET /health
 {
   "status": "healthy",
   "docker_available": true,
+  "circuit_breaker": {
+    "state": "closed",
+    "failure_count": 0,
+    "success_count": 5,
+    "last_failure": null
+  },
   "version": "2.0.0",
   "production_mode": false,
   "queue_stats": {
@@ -249,7 +309,156 @@ GET /health
 | Status | Description |
 |--------|-------------|
 | `healthy` | All systems operational |
-| `degraded` | Docker unavailable |
+| `degraded` | Docker unavailable or circuit breaker open |
+
+### Circuit Breaker States
+
+| State | Description |
+|-------|-------------|
+| `closed` | Normal operation |
+| `open` | Docker failing, requests rejected |
+| `half_open` | Testing recovery |
+
+---
+
+## Worker Pool Stats
+
+Get worker pool statistics.
+
+```
+GET /pool/stats
+```
+
+### Response
+
+```json
+{
+  "pending": 5,
+  "running": 4,
+  "max_workers": 4,
+  "max_queue_size": 100
+}
+```
+
+---
+
+## List Executions
+
+List execution records with pagination.
+
+```
+GET /executions
+```
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `status` | string | null | Filter by status |
+| `job_type` | string | null | Filter by job type |
+| `limit` | integer | 100 | Max records (1-1000) |
+| `offset` | integer | 0 | Pagination offset |
+
+### Response
+
+Array of execution records (same format as job result).
+
+---
+
+## Get Execution
+
+Get a specific execution record.
+
+```
+GET /executions/{execution_id}
+```
+
+### Response
+
+Same format as job result.
+
+---
+
+## Dead Letter Queue
+
+### Get DLQ Statistics
+
+Get statistics about failed jobs in the dead letter queue.
+
+```
+GET /dlq/stats
+```
+
+### Response
+
+```json
+{
+  "total": 3,
+  "by_error_type": {
+    "internal_error": 2,
+    "service_unavailable": 1
+  }
+}
+```
+
+---
+
+### List DLQ Entries
+
+List entries in the dead letter queue.
+
+```
+GET /dlq
+```
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `error_type` | string | null | Filter by error type |
+| `limit` | integer | 100 | Max entries (1-1000) |
+| `offset` | integer | 0 | Pagination offset |
+
+### Response
+
+```json
+[
+  {
+    "id": 1,
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "job_data": {
+      "code": "...",
+      "input_data": {},
+      "job_type": "default"
+    },
+    "error_type": "internal_error",
+    "error_message": "Docker daemon not responding",
+    "retry_count": 0,
+    "created_at": "2024-01-15T10:30:00Z",
+    "client_ip": "192.168.1.100",
+    "correlation_id": "abc-123-def"
+  }
+]
+```
+
+---
+
+### Remove DLQ Entry
+
+Remove a processed entry from the dead letter queue.
+
+```
+DELETE /dlq/{entry_id}
+```
+
+### Response
+
+```json
+{
+  "status": "removed",
+  "entry_id": 1
+}
+```
 
 ---
 
@@ -265,16 +474,6 @@ Invalid request format.
 }
 ```
 
-### 401 Unauthorized
-
-Missing or invalid API key (when auth required).
-
-```json
-{
-  "detail": "API key required"
-}
-```
-
 ### 404 Not Found
 
 Resource not found.
@@ -285,13 +484,23 @@ Resource not found.
 }
 ```
 
-### 429 Too Many Requests
+### 408 Request Timeout
 
-Rate limit exceeded.
+Timeout waiting for job completion.
 
 ```json
 {
-  "detail": "Rate limit exceeded: 60/minute"
+  "detail": "Timeout waiting for job"
+}
+```
+
+### 503 Service Unavailable
+
+Queue full or service degraded.
+
+```json
+{
+  "detail": "Job queue is full, try again later"
 }
 ```
 

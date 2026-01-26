@@ -120,9 +120,6 @@ class ExecutionRecord(BaseModel):
     """Sanitized error information if failed."""
 
     # Audit
-    api_key_id: Optional[str] = None
-    """API key that initiated this execution."""
-
     client_ip: Optional[str] = None
     """Client IP address."""
 
@@ -149,63 +146,6 @@ class ExecutionRecord(BaseModel):
             "duration_ms": self.duration_ms,
             "exit_code": self.exit_code,
         }
-
-
-class APIKey(BaseModel):
-    """API key configuration with quotas and permissions."""
-
-    key_id: str
-    """Unique identifier for this key."""
-
-    key_hash: str
-    """SHA256 hash of the actual key (never store raw key)."""
-
-    name: str
-    """Human-readable name for this key."""
-
-    tenant_id: Optional[str] = None
-    """Project or tenant identifier."""
-
-    # Quotas
-    rate_limit_per_minute: int = 60
-    """Maximum requests per minute."""
-
-    rate_limit_per_hour: int = 1000
-    """Maximum requests per hour."""
-
-    max_concurrent_jobs: int = 5
-    """Maximum concurrent running jobs."""
-
-    max_timeout_seconds: int = 300
-    """Maximum allowed timeout for jobs."""
-
-    # Permissions
-    allowed_job_types: List[str] = Field(default_factory=lambda: ["*"])
-    """List of allowed job types, '*' means all."""
-
-    # Status
-    enabled: bool = True
-    """Whether this key is active."""
-
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    """When this key was created."""
-
-    expires_at: Optional[datetime] = None
-    """When this key expires (None = never)."""
-
-    def is_valid(self) -> bool:
-        """Check if key is currently valid."""
-        if not self.enabled:
-            return False
-        if self.expires_at and datetime.utcnow() > self.expires_at:
-            return False
-        return True
-
-    def can_use_job_type(self, job_type: str) -> bool:
-        """Check if key can use specified job type."""
-        if "*" in self.allowed_job_types:
-            return True
-        return job_type in self.allowed_job_types
 
 
 class JobVersion(BaseModel):
@@ -246,3 +186,34 @@ class JobVersion(BaseModel):
     def short_digest(self) -> str:
         """Return shortened digest for display."""
         return self.digest[:12]
+
+
+class DeadLetterEntry(BaseModel):
+    """Entry in the dead letter queue for failed jobs."""
+
+    id: Optional[int] = None
+    """Database ID (set by storage)."""
+
+    job_id: str
+    """Original job ID."""
+
+    job_data: dict
+    """Original job data (code, input_data, etc.)."""
+
+    error_type: str
+    """Type of error that caused failure."""
+
+    error_message: Optional[str] = None
+    """Error message."""
+
+    retry_count: int = 0
+    """Number of retry attempts made."""
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    """When the entry was added to DLQ."""
+
+    client_ip: Optional[str] = None
+    """Original client IP."""
+
+    correlation_id: Optional[str] = None
+    """Correlation ID for tracing."""

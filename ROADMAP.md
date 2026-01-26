@@ -4,7 +4,6 @@
 
 Production-ready sandbox runtime with:
 - ✅ Docker container isolation
-- ✅ API authentication & rate limiting
 - ✅ Concurrent worker pool
 - ✅ Execution records & audit logging
 - ✅ Seccomp syscall filtering

@@ -39,8 +39,8 @@ sudo apt install -y python3 python3-pip
 git clone https://github.com/example/tako-vm.git
 cd tako-vm
 
-# Install Python deps
-pip3 install -r requirements.txt
+# Install Tako VM with server dependencies
+pip3 install ".[server]"
 ```
 
 ### 3. Build the Executor Image
@@ -62,15 +62,14 @@ nano tako_vm.yaml
 ```yaml
 # tako_vm.yaml
 production_mode: true
-require_auth: true
 max_workers: 4
 ```
 
 ### 5. Run
 
 ```bash
-# Run directly
-python3 run_server.py
+# Run the server
+tako-vm server
 
 # Or with systemd (see production.md)
 ```
@@ -83,74 +82,76 @@ curl http://YOUR_VM_IP:8000/health
 
 ---
 
-## Option 2: Docker Compose (Portable)
+## Option 2: Docker Compose (Recommended)
 
-Run Tako VM itself in a container.
-
-### docker-compose.yml
-
-```yaml
-version: '3.8'
-
-services:
-  tako-vm:
-    build: .
-    image: tako-vm:latest
-    ports:
-      - "8000:8000"
-    volumes:
-      # Mount Docker socket - allows Tako VM to create containers
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Persist data
-      - tako-data:/root/.tako_vm
-      # Config file
-      - ./tako_vm.yaml:/app/tako_vm.yaml:ro
-    environment:
-      - TAKO_VM_CONFIG=/app/tako_vm.yaml
-    restart: unless-stopped
-    # Required for Docker socket access
-    group_add:
-      - ${DOCKER_GID:-999}
-
-volumes:
-  tako-data:
-```
-
-### Dockerfile for Tako VM
-
-```dockerfile
-# Dockerfile.server
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install Docker CLI (to talk to host Docker)
-RUN apt-get update && apt-get install -y \
-    docker.io \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY tako_vm/ ./tako_vm/
-COPY run_server.py .
-
-EXPOSE 8000
-
-CMD ["python", "run_server.py"]
-```
+Run Tako VM itself in a container. The repo includes a ready-to-use `docker-compose.yaml`.
 
 ### Deploy
 
 ```bash
-# Get Docker group ID
-export DOCKER_GID=$(getent group docker | cut -d: -f3)
+# Clone the repo
+git clone https://github.com/example/tako-vm.git
+cd tako-vm
 
-# Build and run
-docker-compose up -d
+# Build both images and start the server
+docker-compose --profile build up -d --build
 
 # Check logs
-docker-compose logs -f
+docker-compose logs -f tako-vm
+```
+
+### What Gets Built
+
+1. **tako-vm-server** - The API server (from `Dockerfile.server`)
+2. **code-executor** - The sandbox container for running code (from `Dockerfile`)
+
+### docker-compose.yaml
+
+The included `docker-compose.yaml` handles everything:
+
+```yaml
+services:
+  tako-vm:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    image: tako-vm-server:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      # Docker socket for spawning executor containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: mount custom config
+      # - ./tako_vm.yaml:/app/tako_vm.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Build executor image (run once with --profile build)
+  executor-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: code-executor:latest
+    command: ["echo", "Executor image built"]
+    profiles:
+      - build
+```
+
+### Customizing
+
+To use a custom config:
+
+```bash
+# Create your config
+cp tako_vm.yaml.example tako_vm.yaml
+nano tako_vm.yaml
+
+# Uncomment the volume mount in docker-compose.yaml, then restart
+docker-compose down && docker-compose up -d
 ```
 
 !!! warning "Security Note"
@@ -250,7 +251,6 @@ metadata:
 data:
   tako_vm.yaml: |
     production_mode: true
-    require_auth: true
     max_workers: 4
     docker_image: your-registry/code-executor:latest
 ```
@@ -297,8 +297,8 @@ if [ ! -d "tako-vm" ]; then
 fi
 cd tako-vm
 
-# Install dependencies
-pip3 install -r requirements.txt
+# Install Tako VM with server dependencies
+pip3 install ".[server]"
 
 # Build executor image
 docker build -t code-executor:latest .
@@ -306,13 +306,12 @@ docker build -t code-executor:latest .
 # Create production config
 cat > tako_vm.yaml << 'EOF'
 production_mode: false
-require_auth: false
 max_workers: 4
 EOF
 
 # Start server
 echo "Starting Tako VM on port 8000..."
-python3 run_server.py &
+tako-vm server &
 
 sleep 3
 echo ""
@@ -330,19 +329,6 @@ chmod +x deploy.sh
 ---
 
 ## After Deployment
-
-### Create API Keys (if auth enabled)
-
-```bash
-python3 -c "
-from tako_vm.server.auth import APIKeyManager
-from pathlib import Path
-
-manager = APIKeyManager(Path.home() / '.tako_vm' / 'api_keys.json')
-key, api_key = manager.create_key('my-app')
-print(f'API Key: {key}')
-"
-```
 
 ### Test Execution
 

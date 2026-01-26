@@ -145,16 +145,8 @@ class TakoVMConfig(BaseModel):
 
     # Paths (stored as strings internally, exposed as Path via properties)
     data_dir_str: str = Field(default_factory=lambda: str(get_default_data_dir()), alias="data_dir")
-    api_keys_file_str: Optional[str] = Field(default=None, alias="api_keys_file")
     database_file_str: Optional[str] = Field(default=None, alias="database_file")
     seccomp_profile_path_str: Optional[str] = Field(default=None, alias="seccomp_profile_path")
-
-    # Authentication
-    require_auth: bool = Field(default=False)
-
-    # API Keys from environment (takes precedence over file)
-    # Can be set via TAKO_VM_API_KEYS env var as JSON array or comma-separated
-    api_keys_from_env: List[Dict[str, Any]] = Field(default_factory=list)
 
     # Queue & Workers
     max_workers: int = Field(default=4, ge=1, le=64)
@@ -190,7 +182,6 @@ class TakoVMConfig(BaseModel):
 
     # Internal: resolved paths (set after validation)
     _resolved_data_dir: Optional[Path] = None
-    _resolved_api_keys_file: Optional[Path] = None
     _resolved_database_file: Optional[Path] = None
     _resolved_seccomp_profile_path: Optional[Path] = None
 
@@ -208,12 +199,6 @@ class TakoVMConfig(BaseModel):
         # Data directory
         self._resolved_data_dir = Path(self.data_dir_str)
         self._resolved_data_dir.mkdir(parents=True, exist_ok=True)
-
-        # API keys file
-        if self.api_keys_file_str:
-            self._resolved_api_keys_file = Path(self.api_keys_file_str)
-        else:
-            self._resolved_api_keys_file = self._resolved_data_dir / "api_keys.json"
 
         # Database file
         if self.database_file_str:
@@ -238,13 +223,6 @@ class TakoVMConfig(BaseModel):
         return self._resolved_data_dir  # type: ignore
 
     @property
-    def api_keys_file(self) -> Path:
-        """Get API keys file path (backward compatible)."""
-        if self._resolved_api_keys_file is None:
-            self.resolve_paths()
-        return self._resolved_api_keys_file  # type: ignore
-
-    @property
     def database_file(self) -> Path:
         """Get database file path (backward compatible)."""
         if self._resolved_database_file is None:
@@ -262,10 +240,6 @@ class TakoVMConfig(BaseModel):
     @property
     def data_dir_path(self) -> Path:
         return self.data_dir
-
-    @property
-    def api_keys_file_path(self) -> Path:
-        return self.api_keys_file
 
     @property
     def database_file_path(self) -> Path:
@@ -338,40 +312,11 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
             if loaded:
                 config_dict = loaded
 
-    # Apply env var overrides for sensitive paths
+    # Apply env var overrides for paths
     if "TAKO_VM_DATA_DIR" in os.environ:
         config_dict["data_dir"] = os.environ["TAKO_VM_DATA_DIR"]
-    if "TAKO_VM_API_KEYS_FILE" in os.environ:
-        config_dict["api_keys_file"] = os.environ["TAKO_VM_API_KEYS_FILE"]
     if "TAKO_VM_DATABASE_FILE" in os.environ:
         config_dict["database_file"] = os.environ["TAKO_VM_DATABASE_FILE"]
-
-    # Parse API keys from environment variable
-    # Supports: TAKO_VM_API_KEYS='[{"name":"key1","key":"tvmk_xxx"}]' (JSON)
-    #       or: TAKO_VM_API_KEY='tvmk_xxx' (single key, auto-named)
-    api_keys_from_env = []
-
-    if "TAKO_VM_API_KEYS" in os.environ:
-        env_keys = os.environ["TAKO_VM_API_KEYS"].strip()
-        if env_keys:
-            try:
-                import json as json_module
-                api_keys_from_env = json_module.loads(env_keys)
-            except json_module.JSONDecodeError:
-                # Try comma-separated format: "tvmk_xxx,tvmk_yyy"
-                for i, key in enumerate(env_keys.split(",")):
-                    key = key.strip()
-                    if key:
-                        api_keys_from_env.append({"name": f"env-key-{i}", "key": key})
-
-    elif "TAKO_VM_API_KEY" in os.environ:
-        # Single key shorthand
-        single_key = os.environ["TAKO_VM_API_KEY"].strip()
-        if single_key:
-            api_keys_from_env.append({"name": "env-key", "key": single_key})
-
-    if api_keys_from_env:
-        config_dict["api_keys_from_env"] = api_keys_from_env
 
     # Validate and create config
     try:
@@ -406,6 +351,13 @@ def set_config_path(path: Optional[Path]) -> None:
     global _config_path, _config
     _config_path = path
     _config = None  # Reset so next get_config() reloads
+
+
+def get_config_path() -> Optional[Path]:
+    """Get the currently configured config file path."""
+    if _config_path:
+        return _config_path
+    return find_config_file()
 
 
 def reset_config() -> None:

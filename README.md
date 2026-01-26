@@ -8,7 +8,6 @@ Tako VM executes Python code in isolated Docker containers with:
 - **Security** - Network isolation, read-only filesystem, seccomp filtering, resource limits
 - **Configurability** - Pydantic-validated YAML config with env var overrides
 - **Job Types** - Pre-configured environments with network control per job type
-- **Authentication** - API keys via environment variables or file-based management
 - **Audit Trail** - Full execution records with timing, artifacts, and error details
 
 ## Quick Start
@@ -78,7 +77,6 @@ Tako VM uses YAML configuration with Pydantic validation. All values have sensib
 ```yaml
 # tako_vm.yaml
 production_mode: false
-require_auth: false
 max_workers: 4
 default_timeout: 30
 max_timeout: 300
@@ -101,15 +99,6 @@ export TAKO_VM_CONFIG=/path/to/config.yaml
 # Override paths
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
 export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/db.sqlite
-
-# API keys (recommended for secrets)
-export TAKO_VM_API_KEY="tvmk_your_secret_key"
-
-# Multiple keys with options
-export TAKO_VM_API_KEYS='[
-  {"name": "prod", "key": "tvmk_xxx", "rate_limit_per_minute": 100},
-  {"name": "dev", "key": "tvmk_yyy", "rate_limit_per_minute": 10}
-]'
 ```
 
 ### Container Limits
@@ -221,38 +210,6 @@ curl http://localhost:8000/jobs/abc123/result
 | `/job-types` | GET | List available job types |
 | `/health` | GET | Health check |
 
-## Authentication
-
-### Enable Auth
-
-```yaml
-require_auth: true
-```
-
-### Provide API Keys
-
-**Option 1: Environment Variable (Recommended)**
-```bash
-export TAKO_VM_API_KEY="tvmk_your_secret_key"
-tako-vm server
-```
-
-**Option 2: File-based**
-```python
-from tako_vm.server.auth import APIKeyManager
-from pathlib import Path
-
-manager = APIKeyManager(Path("~/.tako_vm/api_keys.json").expanduser())
-raw_key, api_key = manager.create_key("my-project")
-print(f"API Key: {raw_key}")  # Save this - shown only once
-```
-
-### Use in Requests
-
-```bash
-curl -H "Authorization: Bearer tvmk_..." http://localhost:8000/execute ...
-```
-
 ## Security Features
 
 | Feature | Description |
@@ -296,7 +253,6 @@ tako-vm/
 ├── tako_vm/
 │   ├── server/              # HTTP API layer
 │   │   ├── app.py           # FastAPI application
-│   │   ├── auth.py          # API key auth & rate limiting
 │   │   └── queue.py         # Worker pool & job queue
 │   ├── execution/           # Docker execution layer
 │   │   ├── worker.py        # Container executor

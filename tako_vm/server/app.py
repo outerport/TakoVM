@@ -4,10 +4,17 @@ FastAPI server for secure code execution.
 Provides both legacy synchronous execution and new async job queue execution.
 """
 
+# Suppress LibreSSL warnings on macOS before any other imports
+import warnings
+try:
+    from urllib3.exceptions import NotOpenSSLWarning
+    warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+except ImportError:
+    pass
+
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
 import time
@@ -16,15 +23,21 @@ import subprocess
 import uuid
 
 from tako_vm.execution.worker import CodeExecutor
+from tako_vm.execution.health import get_circuit_breaker, startup_cleanup
 from tako_vm.job_types import JobTypeRegistry
-from tako_vm.models import ExecutionRecord, APIKey
+from tako_vm.models import ExecutionRecord
 from tako_vm.config import get_config, TakoVMConfig
 from tako_vm.storage import ExecutionStorage
-from tako_vm.server.auth import APIKeyManager, RateLimiter
 from tako_vm.server.queue import WorkerPool
+from tako_vm.server.correlation import (
+    CorrelationIdMiddleware,
+    configure_logging_with_correlation,
+    get_correlation_id
+)
 
-# Configure logging
+# Configure logging with correlation ID support
 logging.basicConfig(level=logging.INFO)
+configure_logging_with_correlation()
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +47,6 @@ class AppState:
     registry: JobTypeRegistry
     executor: CodeExecutor
     storage: ExecutionStorage
-    key_manager: APIKeyManager
-    rate_limiter: RateLimiter
     worker_pool: WorkerPool
 
 
@@ -48,16 +59,15 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Tako VM API server...")
 
+    # Run startup cleanup (orphaned containers, health check)
+    cleanup_results = startup_cleanup()
+    logger.info(f"Startup cleanup: {cleanup_results}")
+
     state.config = get_config()
     state.registry = JobTypeRegistry()
     state.executor = CodeExecutor(registry=state.registry, config=state.config)
     state.storage = ExecutionStorage(state.config.database_file)
     state.storage.init()
-    state.key_manager = APIKeyManager(
-        state.config.api_keys_file,
-        env_keys=state.config.api_keys_from_env
-    )
-    state.rate_limiter = RateLimiter(state.storage)
     state.worker_pool = WorkerPool(
         executor=state.executor,
         storage=state.storage,
@@ -65,10 +75,6 @@ async def lifespan(app: FastAPI):
         max_queue_size=state.config.max_queue_size
     )
     await state.worker_pool.start()
-
-    env_key_count = len(state.config.api_keys_from_env)
-    if env_key_count > 0:
-        logger.info(f"Loaded {env_key_count} API key(s) from environment")
 
     logger.info(f"Tako VM ready (production_mode={state.config.production_mode})")
 
@@ -87,54 +93,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
-# Security
-security = HTTPBearer(auto_error=False)
-
-
-async def get_api_key(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
-) -> Optional[APIKey]:
-    """
-    Dependency to extract and verify API key.
-
-    Returns None if auth not required and no key provided.
-    Raises HTTPException if auth required but invalid.
-    """
-    if not state.config.require_auth:
-        if credentials:
-            # Verify if provided even when not required
-            api_key = state.key_manager.verify(credentials.credentials)
-            return api_key
-        return None
-
-    if not credentials:
-        raise HTTPException(
-            status_code=401,
-            detail="API key required",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
-
-    api_key = state.key_manager.verify(credentials.credentials)
-    if not api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
-
-    return api_key
-
-
-async def check_rate_limit(api_key: Optional[APIKey] = Depends(get_api_key)):
-    """Dependency to check rate limits."""
-    if api_key:
-        allowed, reason = state.rate_limiter.check_rate(api_key)
-        if not allowed:
-            raise HTTPException(status_code=429, detail=reason)
-        state.rate_limiter.record_request(api_key)
-    return api_key
+# Add correlation ID middleware (must be added before other middleware)
+app.add_middleware(CorrelationIdMiddleware)
 
 
 # Request/Response Models
@@ -230,6 +190,7 @@ class HealthResponse(BaseModel):
     """Response model for health check."""
     status: str
     docker_available: bool
+    circuit_breaker: dict
     version: str
     production_mode: bool
     queue_stats: dict
@@ -267,22 +228,24 @@ async def health_check():
     Health check endpoint.
 
     Returns:
-        Health status including Docker availability and queue stats
+        Health status including Docker availability, circuit breaker, and queue stats
     """
-    docker_available = False
-    try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=5
-        )
-        docker_available = result.returncode == 0
-    except Exception:
-        pass
+    circuit_breaker = get_circuit_breaker()
+    docker_available = circuit_breaker.check_docker_health()
+    cb_status = circuit_breaker.get_status()
+
+    # Determine overall status
+    if not docker_available:
+        status = "degraded"
+    elif cb_status["state"] == "open":
+        status = "degraded"
+    else:
+        status = "healthy"
 
     return HealthResponse(
-        status="healthy" if docker_available else "degraded",
+        status=status,
         docker_available=docker_available,
+        circuit_breaker=cb_status,
         version="2.0.0",
         production_mode=state.config.production_mode,
         queue_stats=state.worker_pool.stats
@@ -290,10 +253,7 @@ async def health_check():
 
 
 @app.post("/execute", response_model=ExecuteResponse)
-async def execute_code(
-    request: ExecuteRequest,
-    api_key: Optional[APIKey] = Depends(check_rate_limit)
-):
+async def execute_code(request: ExecuteRequest):
     """
     Execute Python code synchronously (legacy endpoint).
 
@@ -347,11 +307,7 @@ async def execute_code(
 
 
 @app.post("/execute/async", response_model=AsyncExecuteResponse)
-async def execute_code_async(
-    request: ExecuteRequest,
-    http_request: Request,
-    api_key: Optional[APIKey] = Depends(check_rate_limit)
-):
+async def execute_code_async(request: ExecuteRequest, http_request: Request):
     """
     Submit code for async execution.
 
@@ -364,10 +320,14 @@ async def execute_code_async(
         Job ID and queued status
     """
     try:
+        # Include correlation ID in job data for tracing
+        correlation_id = get_correlation_id()
+
         job_data = {
             "code": request.code,
             "input_data": request.input_data,
             "job_type": request.job_type,
+            "correlation_id": correlation_id,
         }
 
         if request.timeout is not None:
@@ -375,11 +335,10 @@ async def execute_code_async(
 
         job_id = await state.worker_pool.submit(
             job_data=job_data,
-            api_key_id=api_key.key_id if api_key else None,
             client_ip=http_request.client.host if http_request.client else None
         )
 
-        logger.info(f"Job {job_id} queued")
+        logger.info(f"Job {job_id} queued (correlation_id={correlation_id})")
 
         return AsyncExecuteResponse(job_id=job_id, status="queued")
 
@@ -446,10 +405,7 @@ async def get_job_result(
 
 
 @app.post("/jobs/{job_id}/cancel")
-async def cancel_job(
-    job_id: str,
-    api_key: Optional[APIKey] = Depends(get_api_key)
-):
+async def cancel_job(job_id: str):
     """
     Cancel a queued or running job.
 
@@ -474,8 +430,7 @@ async def list_executions(
     status: Optional[str] = None,
     job_type: Optional[str] = None,
     limit: int = 100,
-    offset: int = 0,
-    api_key: Optional[APIKey] = Depends(get_api_key)
+    offset: int = 0
 ):
     """
     List execution records.
@@ -492,7 +447,6 @@ async def list_executions(
     records = state.storage.list_records(
         status=status,
         job_type=job_type,
-        api_key_id=api_key.key_id if api_key else None,
         limit=min(limit, 1000),
         offset=offset
     )
@@ -574,11 +528,7 @@ async def get_job_type(name: str):
 
 
 @app.post("/job-types/{name}/build")
-async def build_job_type(
-    name: str,
-    version_tag: Optional[str] = None,
-    api_key: Optional[APIKey] = Depends(get_api_key)
-):
+async def build_job_type(name: str, version_tag: Optional[str] = None):
     """
     Explicitly build a job type container image.
 
@@ -606,7 +556,7 @@ async def build_job_type(
             job_type=jt,
             image_ref=jt.image_name,
             version_tag=version_tag,
-            built_by=api_key.key_id if api_key else "manual"
+            built_by="manual"
         )
 
         return {
@@ -626,6 +576,59 @@ async def build_job_type(
 async def get_pool_stats():
     """Get worker pool statistics."""
     return PoolStatsResponse(**state.worker_pool.stats)
+
+
+# Dead Letter Queue Endpoints
+@app.get("/dlq/stats")
+async def get_dlq_stats():
+    """
+    Get dead letter queue statistics.
+
+    Returns:
+        DLQ stats including total count and breakdown by error type
+    """
+    return state.storage.get_dlq_stats()
+
+
+@app.get("/dlq")
+async def list_dlq_entries(
+    error_type: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    """
+    List dead letter queue entries.
+
+    Args:
+        error_type: Filter by error type
+        limit: Max entries to return
+        offset: Pagination offset
+
+    Returns:
+        List of DLQ entries
+    """
+    entries = state.storage.list_dlq_entries(
+        error_type=error_type,
+        limit=min(limit, 1000),
+        offset=offset
+    )
+    return [entry.model_dump() for entry in entries]
+
+
+@app.delete("/dlq/{entry_id}")
+async def remove_dlq_entry(entry_id: int):
+    """
+    Remove an entry from the dead letter queue.
+
+    Args:
+        entry_id: DLQ entry ID
+
+    Returns:
+        Removal status
+    """
+    if state.storage.remove_from_dlq(entry_id):
+        return {"status": "removed", "entry_id": entry_id}
+    raise HTTPException(status_code=404, detail="DLQ entry not found")
 
 
 # Error handlers

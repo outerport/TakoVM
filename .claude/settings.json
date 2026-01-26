@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(/usr/local/bin/docker --version)",
-      "Bash(/opt/homebrew/bin/docker --version)"
+      "Bash(/opt/homebrew/bin/docker --version)",
+      "Bash(tako-vm:*)"
     ]
   }
 }

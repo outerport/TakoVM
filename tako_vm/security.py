@@ -179,35 +179,134 @@ def classify_error(
     if timed_out:
         return "timeout", "Execution exceeded time limit"
 
-    # OOM killer typically uses exit code 137 (128 + SIGKILL)
-    if exit_code == 137:
+    # Signal-based exit codes (128 + signal_number)
+    if exit_code == 137:  # SIGKILL (9)
         return "oom", "Execution exceeded memory limit"
 
-    # SIGTERM (143 = 128 + 15)
-    if exit_code == 143:
+    if exit_code == 143:  # SIGTERM (15)
         return "cancelled", "Execution was terminated"
 
-    # SIGSEGV (139 = 128 + 11)
-    if exit_code == 139:
+    if exit_code == 139:  # SIGSEGV (11)
         return "segfault", "Segmentation fault in executed code"
 
-    # Check stderr for common patterns
+    if exit_code == 134:  # SIGABRT (6)
+        return "abort", "Process aborted (assertion failure or abort() called)"
+
+    if exit_code == 136:  # SIGFPE (8)
+        return "arithmetic_error", "Floating point exception (division by zero)"
+
+    if exit_code == 135:  # SIGBUS (7)
+        return "bus_error", "Bus error (invalid memory access)"
+
+    if exit_code == 141:  # SIGPIPE (13)
+        return "pipe_error", "Broken pipe"
+
+    # Check stderr for common Python error patterns
     stderr_lower = stderr.lower() if stderr else ""
 
+    # Memory errors
     if "memoryerror" in stderr_lower or "out of memory" in stderr_lower:
         return "oom", "Execution exceeded memory limit"
 
+    if "cannot allocate memory" in stderr_lower:
+        return "oom", "Cannot allocate memory"
+
+    # Process termination
     if "killed" in stderr_lower:
         return "killed", "Process was killed by system"
 
+    # Permission errors
     if "permission denied" in stderr_lower:
         return "permission", "Permission denied during execution"
 
+    if "operation not permitted" in stderr_lower:
+        return "permission", "Operation not permitted"
+
+    # Syntax errors
     if "syntaxerror" in stderr_lower:
         return "syntax_error", sanitize_error(stderr[:200] if stderr else "Syntax error")
 
+    if "indentationerror" in stderr_lower:
+        return "syntax_error", sanitize_error(stderr[:200] if stderr else "Indentation error")
+
+    # Import errors
     if "importerror" in stderr_lower or "modulenotfounderror" in stderr_lower:
         return "import_error", sanitize_error(stderr[:200] if stderr else "Import error")
+
+    # Type errors
+    if "typeerror" in stderr_lower:
+        return "type_error", sanitize_error(stderr[:200] if stderr else "Type error")
+
+    # Value errors
+    if "valueerror" in stderr_lower:
+        return "value_error", sanitize_error(stderr[:200] if stderr else "Value error")
+
+    # Key/Index errors
+    if "keyerror" in stderr_lower:
+        return "key_error", sanitize_error(stderr[:200] if stderr else "Key error")
+
+    if "indexerror" in stderr_lower:
+        return "index_error", sanitize_error(stderr[:200] if stderr else "Index error")
+
+    # Attribute errors
+    if "attributeerror" in stderr_lower:
+        return "attribute_error", sanitize_error(stderr[:200] if stderr else "Attribute error")
+
+    # Name errors
+    if "nameerror" in stderr_lower:
+        return "name_error", sanitize_error(stderr[:200] if stderr else "Name error (undefined variable)")
+
+    # File errors
+    if "filenotfounderror" in stderr_lower:
+        return "file_not_found", sanitize_error(stderr[:200] if stderr else "File not found")
+
+    if "isadirectoryerror" in stderr_lower:
+        return "file_error", "Expected file but found directory"
+
+    if "notadirectoryerror" in stderr_lower:
+        return "file_error", "Expected directory but found file"
+
+    # OS errors
+    if "oserror" in stderr_lower or "ioerror" in stderr_lower:
+        return "os_error", sanitize_error(stderr[:200] if stderr else "OS/IO error")
+
+    # Recursion errors
+    if "recursionerror" in stderr_lower or "maximum recursion depth" in stderr_lower:
+        return "recursion_error", "Maximum recursion depth exceeded"
+
+    # Assertion errors
+    if "assertionerror" in stderr_lower:
+        return "assertion_error", sanitize_error(stderr[:200] if stderr else "Assertion failed")
+
+    # Zero division
+    if "zerodivisionerror" in stderr_lower:
+        return "division_error", "Division by zero"
+
+    # Overflow errors
+    if "overflowerror" in stderr_lower:
+        return "overflow_error", "Numeric overflow"
+
+    # Unicode errors
+    if "unicodeerror" in stderr_lower or "unicodedecodeerror" in stderr_lower or "unicodeencodeerror" in stderr_lower:
+        return "encoding_error", "Unicode encoding/decoding error"
+
+    # JSON errors
+    if "jsondecodeerror" in stderr_lower:
+        return "json_error", "Invalid JSON format"
+
+    # Network errors (if network is enabled)
+    if "connectionerror" in stderr_lower or "connectionrefusederror" in stderr_lower:
+        return "network_error", "Connection error"
+
+    if "timeouterror" in stderr_lower:
+        return "network_timeout", "Network request timed out"
+
+    # Docker/container specific
+    if "docker" in stderr_lower and "not found" in stderr_lower:
+        return "docker_error", "Docker image or command not found"
+
+    if "circuit breaker" in stderr_lower:
+        return "service_unavailable", "Service temporarily unavailable"
 
     # Generic error
     if exit_code != 0:

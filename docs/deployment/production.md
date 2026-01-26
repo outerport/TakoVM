@@ -10,7 +10,6 @@ Create a production config file:
 # /etc/tako-vm/config.yaml
 
 production_mode: true      # Require pre-built images
-require_auth: true         # Require API keys
 
 # Scale workers based on CPU cores
 max_workers: 8
@@ -56,7 +55,7 @@ User=tako-vm
 Group=tako-vm
 WorkingDirectory=/opt/tako-vm
 Environment=TAKO_VM_CONFIG=/etc/tako-vm/config.yaml
-ExecStart=/usr/bin/python3 -m uvicorn tako_vm.server.app:app --host 0.0.0.0 --port 8000
+ExecStart=/usr/local/bin/tako-vm server --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 
@@ -80,26 +79,27 @@ sudo systemctl status tako-vm
 
 ## Running with Docker Compose
 
+The repository includes a production-ready `docker-compose.yaml`:
+
+```bash
+# Build and start
+docker-compose --profile build up -d --build
+
+# View logs
+docker-compose logs -f tako-vm
+
+# Stop
+docker-compose down
+```
+
+To customize, mount your config file:
+
 ```yaml
-# docker-compose.yml
-
-version: '3.8'
-
 services:
   tako-vm:
-    build: .
-    ports:
-      - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./config.yaml:/etc/tako-vm/config.yaml:ro
-      - tako-vm-data:/var/lib/tako-vm
-    environment:
-      - TAKO_VM_CONFIG=/etc/tako-vm/config.yaml
-    restart: unless-stopped
-
-volumes:
-  tako-vm-data:
+      - ./tako_vm.yaml:/app/tako_vm.yaml:ro  # Add this line
 ```
 
 !!! warning
@@ -135,6 +135,9 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # Pass correlation ID through
+        proxy_set_header X-Correlation-ID $http_x_correlation_id;
+
         # Timeouts for long-running jobs
         proxy_read_timeout 300s;
         proxy_connect_timeout 10s;
@@ -147,6 +150,54 @@ server {
 }
 ```
 
+## Built-in Resilience Features
+
+Tako VM includes several built-in features for production reliability:
+
+### Startup Cleanup
+
+On startup, Tako VM automatically:
+- Checks Docker daemon health
+- Removes orphaned containers from previous runs
+- Initializes the circuit breaker
+
+### Circuit Breaker
+
+The circuit breaker prevents cascading failures when Docker is unavailable:
+
+- **Failure threshold**: 5 consecutive failures opens the circuit
+- **Recovery timeout**: 30 seconds before testing recovery
+- **Success threshold**: 2 successes closes the circuit
+
+Monitor via health endpoint:
+```bash
+curl http://localhost:8000/health | jq '.circuit_breaker'
+```
+
+### Automatic Retry
+
+Transient Docker failures are automatically retried:
+- Max attempts: 2
+- Exponential backoff with jitter
+
+### Dead Letter Queue
+
+Failed jobs are stored in a dead letter queue for investigation:
+```bash
+# Check DLQ stats
+curl http://localhost:8000/dlq/stats
+
+# List failed jobs
+curl http://localhost:8000/dlq
+```
+
+### Correlation IDs
+
+All requests include correlation IDs for distributed tracing:
+- Auto-generated if not provided
+- Included in logs and DLQ entries
+- Returned in response headers
+
 ## Monitoring
 
 ### Health Checks
@@ -156,25 +207,74 @@ server {
 curl -f http://localhost:8000/health || exit 1
 ```
 
+The health endpoint returns detailed status:
+```json
+{
+  "status": "healthy",
+  "docker_available": true,
+  "circuit_breaker": {
+    "state": "closed",
+    "failure_count": 0
+  },
+  "queue_stats": {
+    "pending": 0,
+    "running": 2
+  }
+}
+```
+
 ### Metrics to Monitor
 
-| Metric | Description | Alert Threshold |
-|--------|-------------|-----------------|
-| Queue depth | Pending jobs | > 50 |
-| Worker utilization | Running / max_workers | > 80% |
-| Error rate | Failed / total | > 5% |
-| P95 latency | 95th percentile execution time | > 10s |
+| Metric | Source | Alert Threshold |
+|--------|--------|-----------------|
+| Queue depth | `/pool/stats` pending | > 50 |
+| Worker utilization | running / max_workers | > 80% |
+| Circuit breaker state | `/health` circuit_breaker.state | != closed |
+| DLQ size | `/dlq/stats` total | > 10 |
+| Error rate | Execution records | > 5% |
+| P95 latency | Execution duration_ms | > 10s |
+
+### Alerting on Circuit Breaker
+
+```bash
+#!/bin/bash
+# /opt/tako-vm/check-health.sh
+
+HEALTH=$(curl -s http://localhost:8000/health)
+CB_STATE=$(echo $HEALTH | jq -r '.circuit_breaker.state')
+DLQ_TOTAL=$(curl -s http://localhost:8000/dlq/stats | jq '.total')
+
+if [ "$CB_STATE" = "open" ]; then
+    echo "CRITICAL: Circuit breaker is OPEN"
+    exit 2
+fi
+
+if [ "$DLQ_TOTAL" -gt 10 ]; then
+    echo "WARNING: DLQ has $DLQ_TOTAL entries"
+    exit 1
+fi
+
+echo "OK: System healthy"
+exit 0
+```
 
 ### Log Aggregation
 
-Tako VM logs to stdout. Configure your log aggregator:
+Tako VM logs include correlation IDs for tracing:
+
+```
+2024-01-15 10:30:00 [abc-123-def] INFO tako_vm.server.queue: Worker 0 executing job 550e8400...
+2024-01-15 10:30:01 [abc-123-def] INFO tako_vm.execution.worker: Job completed successfully
+```
+
+Configure your log aggregator to parse correlation IDs:
 
 ```bash
 # View logs
 journalctl -u tako-vm -f
 
-# JSON logging (add to uvicorn)
---log-config logging.yaml
+# Filter by correlation ID
+journalctl -u tako-vm | grep "abc-123-def"
 ```
 
 ## Scaling
@@ -216,8 +316,7 @@ max_workers: 16  # More concurrent executions
 
 | Path | Contents | Frequency |
 |------|----------|-----------|
-| `/var/lib/tako-vm/executions.db` | Execution records | Daily |
-| `/var/lib/tako-vm/api_keys.json` | API keys | On change |
+| `/var/lib/tako-vm/executions.db` | Execution records + DLQ | Daily |
 | `/etc/tako-vm/config.yaml` | Configuration | On change |
 
 ### Backup Script
@@ -231,14 +330,23 @@ DATE=$(date +%Y%m%d)
 
 mkdir -p $BACKUP_DIR
 
-# Backup database
+# Backup database (includes execution records and DLQ)
 sqlite3 /var/lib/tako-vm/executions.db ".backup '$BACKUP_DIR/executions-$DATE.db'"
-
-# Backup config
-cp /var/lib/tako-vm/api_keys.json $BACKUP_DIR/api_keys-$DATE.json
 
 # Retain 30 days
 find $BACKUP_DIR -mtime +30 -delete
+```
+
+### DLQ Maintenance
+
+Periodically review and clean up the dead letter queue:
+
+```bash
+# Review failed jobs
+curl http://localhost:8000/dlq | jq '.[] | {id, error_type, created_at}'
+
+# Remove old entries (implement in your maintenance script)
+curl -X DELETE http://localhost:8000/dlq/1
 ```
 
 ## Checklist
@@ -246,12 +354,20 @@ find $BACKUP_DIR -mtime +30 -delete
 Before going to production:
 
 - [ ] Enable `production_mode: true`
-- [ ] Enable `require_auth: true`
 - [ ] Pre-build all required images
 - [ ] Configure TLS/HTTPS
-- [ ] Set up monitoring and alerting
-- [ ] Configure log aggregation
+- [ ] Set up monitoring for:
+  - [ ] Health endpoint
+  - [ ] Circuit breaker state
+  - [ ] DLQ size
+  - [ ] Queue depth
+- [ ] Configure log aggregation with correlation ID parsing
 - [ ] Set up automated backups
-- [ ] Test failure scenarios
-- [ ] Document API keys distribution
-- [ ] Set appropriate rate limits
+- [ ] Test failure scenarios:
+  - [ ] Docker daemon restart
+  - [ ] High load (queue full)
+  - [ ] OOM kills
+- [ ] Document runbooks for:
+  - [ ] Circuit breaker open
+  - [ ] High DLQ count
+  - [ ] Queue backup

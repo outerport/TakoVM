@@ -7,9 +7,16 @@ Core modules:
 - tako_vm: Typed Python SDK for function execution
 - job_types: Execution environment configuration
 - models: ExecutionRecord and other data models
-- auth: API key authentication and rate limiting
 - config: Configuration management
 """
+
+# Suppress LibreSSL warnings on macOS (urllib3 v2 requires OpenSSL 1.1.1+)
+import warnings
+try:
+    from urllib3.exceptions import NotOpenSSLWarning
+    warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+except ImportError:
+    pass
 
 from tako_vm.sdk.client import (
     send,
@@ -25,7 +32,7 @@ from tako_vm.sdk.client import (
 )
 
 from tako_vm.job_types import JobType, JobTypeRegistry
-from tako_vm.models import ExecutionRecord, ResourceUsage, Artifact, APIKey, JobVersion
+from tako_vm.models import ExecutionRecord, ResourceUsage, Artifact, JobVersion
 from tako_vm.config import TakoVMConfig, get_config
 
 __all__ = [
@@ -45,7 +52,6 @@ __all__ = [
     "ExecutionRecord",
     "ResourceUsage",
     "Artifact",
-    "APIKey",
     "JobVersion",
     # Configuration
     "TakoVMConfig",

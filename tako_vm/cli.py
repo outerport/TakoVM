@@ -9,6 +9,14 @@ Usage:
     tako-vm version         Show version
 """
 
+# Suppress LibreSSL warnings on macOS before any other imports
+import warnings
+try:
+    from urllib3.exceptions import NotOpenSSLWarning
+    warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+except ImportError:
+    pass
+
 import argparse
 import sys
 from pathlib import Path
@@ -169,7 +177,6 @@ def validate_config(args):
             print(f"\nSummary:")
             print(f"  Mode: {'production' if config.production_mode else 'development'}")
             print(f"  Workers: {config.max_workers}")
-            print(f"  Auth required: {config.require_auth}")
             print(f"  Max timeout: {config.max_timeout}s")
             print(f"  Job types defined: {len(config.job_types)}")
             if config.job_types:
@@ -181,7 +188,7 @@ def validate_config(args):
 
 def show_config(args):
     """Show current configuration."""
-    from tako_vm.config import get_config, find_config_file, ConfigurationError
+    from tako_vm.config import get_config, get_config_path, ConfigurationError
 
     try:
         config = get_config()
@@ -189,12 +196,12 @@ def show_config(args):
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    config_file = find_config_file()
+    config_file = get_config_path()
 
     if args.json:
         import json
         # Export as JSON
-        data = config.model_dump(exclude={'_resolved_data_dir', '_resolved_api_keys_file',
+        data = config.model_dump(exclude={'_resolved_data_dir',
                                           '_resolved_database_file', '_resolved_seccomp_profile_path'})
         print(json.dumps(data, indent=2, default=str))
     else:
@@ -212,14 +219,7 @@ def show_config(args):
 
         print("[Paths]")
         print(f"  data_dir: {config.data_dir}")
-        print(f"  api_keys_file: {config.api_keys_file}")
         print(f"  database_file: {config.database_file}")
-        print()
-
-        print("[Authentication]")
-        print(f"  require_auth: {config.require_auth}")
-        if config.api_keys_from_env:
-            print(f"  api_keys_from_env: {len(config.api_keys_from_env)} key(s) loaded")
         print()
 
         print("[Queue & Workers]")

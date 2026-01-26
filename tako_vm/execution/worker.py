@@ -23,8 +23,15 @@ from tako_vm.security import (
     DEFAULT_MAX_STDOUT_BYTES, DEFAULT_MAX_STDERR_BYTES, DEFAULT_MAX_ARTIFACT_BYTES
 )
 from tako_vm.config import get_config, TakoVMConfig
+from tako_vm.execution.health import get_circuit_breaker
+from tako_vm.execution.retry import RetryConfig, RetryContext, is_transient_error
 
 logger = logging.getLogger(__name__)
+
+# Workspace directory for job files (can be set via TAKO_VM_WORKSPACE env var)
+# When running the server in a container with Docker socket mounted, this must
+# be a path that exists on the host and is mounted into the server container.
+WORKSPACE_DIR = os.environ.get("TAKO_VM_WORKSPACE", tempfile.gettempdir())
 
 
 # Default job type for backward compatibility
@@ -143,7 +150,7 @@ class CodeExecutor:
         timeout = job.get("timeout", job_type.timeout)
 
         # Create temporary workspace
-        workspace = Path(tempfile.mkdtemp(prefix=f"job-{job_id}-"))
+        workspace = Path(tempfile.mkdtemp(prefix=f"job-{job_id}-", dir=WORKSPACE_DIR))
 
         try:
             # Prepare directories
@@ -198,7 +205,6 @@ class CodeExecutor:
         self,
         job_id: str,
         job: dict,
-        api_key_id: Optional[str] = None,
         client_ip: Optional[str] = None
     ) -> ExecutionRecord:
         """
@@ -209,7 +215,6 @@ class CodeExecutor:
         Args:
             job_id: Unique job identifier
             job: Dictionary with code, input_data, timeout, job_type
-            api_key_id: API key that initiated this execution
             client_ip: Client IP address
 
         Returns:
@@ -222,12 +227,11 @@ class CodeExecutor:
         record = ExecutionRecord(
             execution_id=job_id,
             status="pending",
-            job_type=job.get("job_type", "default"),
+            job_type=job.get("job_type") or "default",
             job_version="latest",  # Will be updated if version manager is used
             created_at=datetime.utcnow(),
             code_hash=hashlib.sha256(code.encode()).hexdigest(),
             input_hash=hashlib.sha256(json.dumps(input_data, sort_keys=True).encode()).hexdigest(),
-            api_key_id=api_key_id,
             client_ip=client_ip,
         )
 
@@ -245,7 +249,7 @@ class CodeExecutor:
         timeout = job.get("timeout", job_type.timeout)
 
         # Create temporary workspace
-        workspace = Path(tempfile.mkdtemp(prefix=f"job-{job_id}-"))
+        workspace = Path(tempfile.mkdtemp(prefix=f"job-{job_id}-", dir=WORKSPACE_DIR))
 
         try:
             # Prepare directories
@@ -272,26 +276,52 @@ class CodeExecutor:
             record.status = "running"
             record.started_at = datetime.utcnow()
 
-            # Execute in container
+            # Execute in container with retry for transient failures
             start_time = time.time()
             timed_out = False
+            retry_ctx = RetryContext(RetryConfig(max_attempts=2, base_delay=1.0))
 
-            try:
-                result = self._run_container(
-                    code_dir=code_dir,
-                    input_dir=input_dir,
-                    output_dir=output_dir,
-                    timeout=timeout,
-                    job_type=job_type
-                )
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                result = {
-                    "success": False,
-                    "stdout": "",
-                    "stderr": "",
-                    "exit_code": -1,
-                }
+            while retry_ctx.should_retry():
+                try:
+                    result = self._run_container(
+                        code_dir=code_dir,
+                        input_dir=input_dir,
+                        output_dir=output_dir,
+                        timeout=timeout,
+                        job_type=job_type
+                    )
+
+                    # Check for transient Docker errors in result
+                    if not result.get("success") and result.get("error"):
+                        error_msg = result.get("error", "").lower()
+                        if any(pattern in error_msg for pattern in [
+                            "circuit breaker",
+                            "docker daemon",
+                            "connection refused",
+                        ]):
+                            # Transient error, retry if possible
+                            retry_ctx.record_failure(Exception(result.get("error")))
+                            if retry_ctx.should_retry():
+                                continue
+                    break  # Success or non-transient error
+
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    result = {
+                        "success": False,
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": -1,
+                    }
+                    break  # Timeout is not retriable
+
+                except Exception as e:
+                    if is_transient_error(e):
+                        retry_ctx.record_failure(e)
+                        if retry_ctx.should_retry():
+                            continue
+                    # Non-transient or exhausted retries
+                    raise
 
             end_time = time.time()
             wall_time_ms = int((end_time - start_time) * 1000)
@@ -432,6 +462,17 @@ class CodeExecutor:
         Returns:
             Dictionary with execution results
         """
+        # Check circuit breaker before attempting Docker operation
+        circuit_breaker = get_circuit_breaker()
+        if not circuit_breaker.is_available:
+            return {
+                "success": False,
+                "error": "Docker service unavailable (circuit breaker open)",
+                "stdout": "",
+                "stderr": "Circuit breaker is open due to repeated Docker failures. Service will retry automatically.",
+                "exit_code": -1
+            }
+
         # Determine which image to use
         image_name = job_type.image_name if job_type.name != "default" else self.docker_image
 
@@ -542,6 +583,9 @@ class CodeExecutor:
                 text=True
             )
 
+            # Record success with circuit breaker
+            circuit_breaker.record_success()
+
             return {
                 "success": result.returncode == 0,
                 "stdout": result.stdout,
@@ -550,6 +594,7 @@ class CodeExecutor:
             }
 
         except subprocess.TimeoutExpired:
+            # Timeout is not a Docker failure, don't record with circuit breaker
             return {
                 "success": False,
                 "error": f"Execution timeout exceeded ({timeout}s)",
@@ -558,7 +603,21 @@ class CodeExecutor:
                 "exit_code": -1,
                 "timeout": timeout
             }
+        except FileNotFoundError:
+            # Docker command not found - record failure
+            circuit_breaker.record_failure("docker command not found")
+            return {
+                "success": False,
+                "error": "Docker command not found",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1
+            }
         except Exception as e:
+            # Other errors might be Docker-related
+            error_msg = str(e).lower()
+            if "docker" in error_msg or "daemon" in error_msg or "connection" in error_msg:
+                circuit_breaker.record_failure(str(e))
             return {
                 "success": False,
                 "error": str(e),

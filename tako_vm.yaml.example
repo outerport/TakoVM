@@ -6,7 +6,6 @@
 # ==============================================================================
 
 production_mode: false    # true = strict mode (no auto-build, versions required)
-require_auth: false       # true = require API key for all requests
 max_workers: 4            # concurrent execution slots
 
 # ==============================================================================
@@ -79,24 +78,10 @@ job_types:
       - "*.amazonaws.com"
 
 # ==============================================================================
-# AUTHENTICATION (optional)
-# ==============================================================================
-
-# API keys via environment variable (recommended):
-#   export TAKO_VM_API_KEY="tvmk_your_secret_key"
-#
-# Or multiple keys:
-#   export TAKO_VM_API_KEYS='[
-#     {"name": "prod", "key": "tvmk_xxx", "rate_limit_per_minute": 100},
-#     {"name": "dev", "key": "tvmk_yyy", "rate_limit_per_minute": 10}
-#   ]'
-
-# ==============================================================================
 # PATHS (usually leave as defaults)
 # ==============================================================================
 
 # data_dir: ~/.tako_vm
-# api_keys_file: ~/.tako_vm/api_keys.json
 # database_file: ~/.tako_vm/executions.db
 
 # ==============================================================================

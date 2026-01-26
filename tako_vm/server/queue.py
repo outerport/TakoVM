@@ -12,8 +12,9 @@ from typing import Optional, Dict, Callable, Any, TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 
-from tako_vm.models import ExecutionRecord
+from tako_vm.models import ExecutionRecord, ExecutionError, DeadLetterEntry
 from tako_vm.storage import ExecutionStorage
+from tako_vm.server.correlation import set_correlation_id, get_correlation_id
 
 if TYPE_CHECKING:
     from tako_vm.execution.worker import CodeExecutor
@@ -31,17 +32,14 @@ class QueuedJob:
     job_data: dict
     """Job data including code, input_data, etc."""
 
-    api_key_id: Optional[str]
-    """API key that submitted this job."""
-
     client_ip: Optional[str]
     """Client IP address."""
 
     created_at: datetime = field(default_factory=datetime.utcnow)
     """When the job was queued."""
 
-    future: asyncio.Future = field(default_factory=lambda: asyncio.get_event_loop().create_future())
-    """Future that will hold the result."""
+    future: Optional[asyncio.Future] = field(default=None)
+    """Future that will hold the result (set by WorkerPool.submit)."""
 
     cancelled: bool = False
     """Whether this job has been cancelled."""
@@ -118,7 +116,7 @@ class WorkerPool:
         while not self._queue.empty():
             try:
                 job = self._queue.get_nowait()
-                if not job.future.done():
+                if job.future and not job.future.done():
                     job.future.cancel()
             except asyncio.QueueEmpty:
                 break
@@ -150,7 +148,6 @@ class WorkerPool:
     async def submit(
         self,
         job_data: dict,
-        api_key_id: Optional[str] = None,
         client_ip: Optional[str] = None
     ) -> str:
         """
@@ -158,7 +155,6 @@ class WorkerPool:
 
         Args:
             job_data: Job data dictionary
-            api_key_id: API key that submitted the job
             client_ip: Client IP address
 
         Returns:
@@ -169,11 +165,14 @@ class WorkerPool:
         """
         job_id = str(uuid.uuid4())
 
+        # Create future in async context where event loop is running
+        loop = asyncio.get_running_loop()
+
         job = QueuedJob(
             job_id=job_id,
             job_data=job_data,
-            api_key_id=api_key_id,
             client_ip=client_ip,
+            future=loop.create_future(),
         )
 
         try:
@@ -214,6 +213,9 @@ class WorkerPool:
                 return record
             raise KeyError(f"Job {job_id} not found")
 
+        if not job.future:
+            raise KeyError(f"Job {job_id} has no future (internal error)")
+
         if timeout:
             return await asyncio.wait_for(job.future, timeout=timeout)
         else:
@@ -239,7 +241,7 @@ class WorkerPool:
 
         if job_id in self._active_jobs:
             job = self._active_jobs[job_id]
-            if job.future.done():
+            if job.future and job.future.done():
                 return {
                     'job_id': job_id,
                     'status': 'completed',
@@ -276,7 +278,7 @@ class WorkerPool:
         """
         # Check pending jobs
         job = self._active_jobs.get(job_id)
-        if job and not job.future.done():
+        if job and job.future and not job.future.done():
             job.cancelled = True
             job.future.cancel()
             logger.info(f"Job {job_id} cancelled (was pending)")
@@ -333,12 +335,17 @@ class WorkerPool:
                     continue
 
                 # Skip if already cancelled
-                if job.cancelled or job.future.cancelled():
+                if job.cancelled or (job.future and job.future.cancelled()):
                     self._active_jobs.pop(job.job_id, None)
                     continue
 
                 # Move to running
                 self._running_jobs[job.job_id] = job
+
+                # Set correlation ID from job data for logging
+                correlation_id = job.job_data.get("correlation_id")
+                if correlation_id:
+                    set_correlation_id(correlation_id)
 
                 logger.info(f"Worker {worker_id} executing job {job.job_id}")
 
@@ -350,7 +357,7 @@ class WorkerPool:
                     self.storage.save_record(record)
 
                     # Set result
-                    if not job.future.done():
+                    if job.future and not job.future.done():
                         job.future.set_result(record)
 
                 except asyncio.CancelledError:
@@ -358,22 +365,56 @@ class WorkerPool:
                     record = ExecutionRecord(
                         execution_id=job.job_id,
                         status="cancelled",
-                        job_type=job.job_data.get("job_type", "default"),
+                        job_type=job.job_data.get("job_type") or "default",
                         code_hash=ExecutionRecord.hash_content(job.job_data.get("code", "")),
                         input_hash=ExecutionRecord.hash_content(str(job.job_data.get("input_data", {}))),
-                        api_key_id=job.api_key_id,
                         client_ip=job.client_ip,
                     )
                     self.storage.save_record(record)
 
-                    if not job.future.done():
+                    if job.future and not job.future.done():
                         job.future.set_result(record)
 
                 except Exception as e:
                     logger.error(f"Worker {worker_id} error on job {job.job_id}: {e}")
 
-                    if not job.future.done():
-                        job.future.set_exception(e)
+                    # Always create an ExecutionRecord for audit trail (P0 fix)
+                    from tako_vm.security import sanitize_error
+                    error_type = "internal_error"
+                    error_msg = sanitize_error(str(e))
+
+                    record = ExecutionRecord(
+                        execution_id=job.job_id,
+                        status="error",
+                        job_type=job.job_data.get("job_type") or "default",
+                        code_hash=ExecutionRecord.hash_content(job.job_data.get("code", "")),
+                        input_hash=ExecutionRecord.hash_content(str(job.job_data.get("input_data", {}))),
+                        client_ip=job.client_ip,
+                        error=ExecutionError(
+                            type=error_type,
+                            message=error_msg
+                        ),
+                    )
+                    self.storage.save_record(record)
+
+                    # Add to dead letter queue for internal errors (P3 fix)
+                    try:
+                        dlq_entry = DeadLetterEntry(
+                            job_id=job.job_id,
+                            job_data=job.job_data,
+                            error_type=error_type,
+                            error_message=error_msg,
+                            retry_count=0,
+                            client_ip=job.client_ip,
+                            correlation_id=get_correlation_id(),
+                        )
+                        self.storage.add_to_dlq(dlq_entry)
+                        logger.info(f"Job {job.job_id} added to dead letter queue")
+                    except Exception as dlq_err:
+                        logger.warning(f"Failed to add job {job.job_id} to DLQ: {dlq_err}")
+
+                    if job.future and not job.future.done():
+                        job.future.set_result(record)
 
                 finally:
                     # Cleanup
@@ -420,6 +461,5 @@ class WorkerPool:
         return self.executor.execute_job_with_record(
             job_id=job.job_id,
             job=job.job_data,
-            api_key_id=job.api_key_id,
             client_ip=job.client_ip,
         )

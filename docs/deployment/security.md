@@ -6,9 +6,6 @@ Tako VM implements defense-in-depth to safely execute untrusted code.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      API Authentication                      │
-│                    (API Keys + Rate Limiting)                │
-├─────────────────────────────────────────────────────────────┤
 │                      Input Validation                        │
 │                  (Size limits, sanitization)                 │
 ├─────────────────────────────────────────────────────────────┤
@@ -213,20 +210,6 @@ Stack traces are sanitized to prevent information leakage:
 
 ## API Security
 
-### Authentication
-
-API keys are:
-- Generated with cryptographic randomness
-- Stored hashed (SHA256)
-- Never logged or returned after creation
-
-### Rate Limiting
-
-Prevents abuse:
-- Per-minute limits
-- Per-hour limits
-- Concurrent job limits
-
 ### HTTPS
 
 Always use TLS in production:
@@ -249,8 +232,6 @@ Tako VM protects against:
 | Data exfiltration | Network isolation |
 | Disk filling | File size limits |
 | Information leakage | Output sanitization |
-| Unauthorized access | API authentication |
-| Abuse/DoS | Rate limiting |
 
 ### Out of Scope
 
@@ -369,7 +350,6 @@ This separates the API server from the execution environment entirely, but adds 
 
 ## Security Checklist
 
-- [ ] Enable `require_auth: true`
 - [ ] Enable `enable_seccomp: true`
 - [ ] Enable `enable_userns: true` (non-root execution)
 - [ ] Use HTTPS in production
@@ -377,6 +357,5 @@ This separates the API server from the execution environment entirely, but adds 
 - [ ] Keep Docker updated
 - [ ] For network-enabled jobs, use `allowed_hosts` to restrict domains
 - [ ] Monitor for anomalies
-- [ ] Rotate API keys periodically
 - [ ] Review execution logs
 - [ ] Test security controls regularly
