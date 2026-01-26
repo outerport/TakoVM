@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from src.job_types import JobType, JobTypeRegistry
+from tako_vm.job_types import JobType, JobTypeRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ def build_job_type_cli():
 
     logging.basicConfig(level=logging.INFO)
 
-    from src.job_types import init_default_job_types
+    from tako_vm.job_types import init_default_job_types
 
     registry = JobTypeRegistry()
 

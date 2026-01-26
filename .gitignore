@@ -154,6 +154,10 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# Tako VM config (user-specific)
+tako_vm.yaml
+.tako_vm/
+
 # mypy
 .mypy_cache/
 .dmypy.json

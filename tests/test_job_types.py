@@ -1,6 +1,10 @@
 """
 Test job types functionality.
 """
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dataclasses import dataclass
 import tako_vm

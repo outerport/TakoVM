@@ -1,0 +1,210 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "defaultErrnoRet": 1,
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": [
+        "SCMP_ARCH_X86",
+        "SCMP_ARCH_X32"
+      ]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": [
+        "SCMP_ARCH_ARM"
+      ]
+    }
+  ],
+  "syscalls": [
+    {
+      "comment": "Allow standard file operations",
+      "names": [
+        "read", "write", "open", "close", "stat", "fstat", "lstat",
+        "poll", "lseek", "mmap", "mprotect", "munmap", "brk",
+        "access", "pipe", "select", "dup", "dup2", "dup3",
+        "fcntl", "flock", "fsync", "fdatasync", "truncate", "ftruncate",
+        "getdents", "getdents64", "getcwd", "chdir", "fchdir",
+        "rename", "mkdir", "rmdir", "creat", "link", "unlink",
+        "symlink", "readlink", "chmod", "fchmod", "chown", "fchown",
+        "lchown", "umask", "statfs", "fstatfs", "readv", "writev",
+        "pread64", "pwrite64", "preadv", "pwritev", "preadv2", "pwritev2",
+        "openat", "mkdirat", "mknodat", "fchownat", "futimesat",
+        "newfstatat", "unlinkat", "renameat", "linkat", "symlinkat",
+        "readlinkat", "fchmodat", "faccessat", "utimensat", "statx",
+        "copy_file_range", "sync_file_range"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow memory management",
+      "names": [
+        "mremap", "msync", "mincore", "madvise", "mlock", "munlock",
+        "mlockall", "munlockall", "memfd_create"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow process control (limited)",
+      "names": [
+        "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "rt_sigpending",
+        "rt_sigtimedwait", "rt_sigqueueinfo", "rt_sigsuspend",
+        "sigaltstack", "getpid", "getppid", "getpgrp", "getpgid",
+        "getsid", "getuid", "geteuid", "getgid", "getegid",
+        "getgroups", "getresuid", "getresgid", "times", "getrusage",
+        "getrlimit", "prlimit64", "sysinfo", "uname",
+        "sched_yield", "sched_getaffinity", "sched_setaffinity",
+        "sched_getscheduler", "sched_setscheduler", "sched_getparam",
+        "sched_setparam", "sched_get_priority_max", "sched_get_priority_min",
+        "sched_rr_get_interval"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow time operations",
+      "names": [
+        "gettimeofday", "clock_gettime", "clock_getres", "clock_nanosleep",
+        "nanosleep", "timer_create", "timer_settime", "timer_gettime",
+        "timer_getoverrun", "timer_delete", "timerfd_create",
+        "timerfd_settime", "timerfd_gettime"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow futex and synchronization",
+      "names": [
+        "futex", "set_robust_list", "get_robust_list",
+        "eventfd", "eventfd2"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow epoll and polling",
+      "names": [
+        "epoll_create", "epoll_create1", "epoll_ctl", "epoll_wait",
+        "epoll_pwait", "epoll_pwait2", "pselect6", "ppoll"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow pipe operations",
+      "names": [
+        "pipe2", "splice", "tee", "vmsplice"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow inotify (file watching)",
+      "names": [
+        "inotify_init", "inotify_init1", "inotify_add_watch", "inotify_rm_watch"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow signalfd",
+      "names": [
+        "signalfd", "signalfd4"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow process creation (for subprocess)",
+      "names": [
+        "clone", "clone3", "fork", "vfork", "execve", "execveat",
+        "wait4", "waitid", "exit", "exit_group"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow kill (for signal handling)",
+      "names": [
+        "kill", "tgkill", "tkill"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow arch_prctl for x86_64",
+      "names": [
+        "arch_prctl"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow prctl for thread naming etc",
+      "names": [
+        "prctl"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {
+          "index": 0,
+          "value": 15,
+          "op": "SCMP_CMP_EQ"
+        }
+      ]
+    },
+    {
+      "comment": "Allow prctl PR_SET_NAME",
+      "names": [
+        "prctl"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {
+          "index": 0,
+          "value": 1,
+          "op": "SCMP_CMP_EQ"
+        }
+      ]
+    },
+    {
+      "comment": "Allow set_tid_address",
+      "names": [
+        "set_tid_address"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow restart_syscall",
+      "names": [
+        "restart_syscall"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow getrandom for /dev/urandom",
+      "names": [
+        "getrandom"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow ioctl for terminal operations",
+      "names": [
+        "ioctl"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow capget/capset (read only)",
+      "names": [
+        "capget"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Explicitly deny dangerous syscalls",
+      "names": [
+        "ptrace", "personality", "mount", "umount2", "pivot_root",
+        "swapon", "swapoff", "reboot", "sethostname", "setdomainname",
+        "ioperm", "iopl", "init_module", "finit_module", "delete_module",
+        "kexec_load", "kexec_file_load", "acct", "quotactl",
+        "lookup_dcookie", "vhangup", "modify_ldt", "uselib",
+        "perf_event_open", "bpf", "userfaultfd", "open_by_handle_at",
+        "name_to_handle_at", "keyctl", "add_key", "request_key"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    }
+  ]
+}

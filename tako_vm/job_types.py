@@ -88,9 +88,11 @@ class JobTypeRegistry:
         Initialize the registry.
 
         Args:
-            config_path: Path to config file. Defaults to ./job_types.json
+            config_path: Path to config file. Defaults to job_types.json in package dir.
         """
-        self.config_path = config_path or Path("job_types.json")
+        if config_path is None:
+            config_path = Path(__file__).parent / "job_types.json"
+        self.config_path = config_path
         self._job_types: dict[str, JobType] = {}
         self._load()
 

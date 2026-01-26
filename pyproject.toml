@@ -1,0 +1,98 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tako-vm"
+version = "2.0.0"
+description = "Secure Python code execution in isolated Docker containers"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Tako VM Team" }
+]
+keywords = [
+    "code-execution",
+    "docker",
+    "sandbox",
+    "security",
+    "ai",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# Minimal dependencies for SDK client only
+dependencies = [
+    "requests>=2.31.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+# Full server installation
+server = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pyyaml>=6.0",
+]
+# All dependencies
+all = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pyyaml>=6.0",
+]
+# Development dependencies
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+    "ruff>=0.1.0",
+]
+# Documentation
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/tako-vm"
+Documentation = "https://github.com/example/tako-vm#readme"
+Repository = "https://github.com/example/tako-vm"
+Issues = "https://github.com/example/tako-vm/issues"
+
+[project.scripts]
+tako-vm = "tako_vm.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tako_vm"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/tako_vm",
+    "/README.md",
+    "/LICENSE",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

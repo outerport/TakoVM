@@ -1,8 +1,8 @@
 FROM python:3.11-slim
 
 # Install custom libraries
-# Place your .whl files in custom_libs/ directory before building
-COPY ./custom_libs /tmp/custom_libs
+# Place your .whl files in tako_vm/custom_libs/ directory before building
+COPY ./tako_vm/custom_libs /tmp/custom_libs
 
 # Install any .whl files found in custom_libs
 RUN if [ -n "$(ls -A /tmp/custom_libs/*.whl 2>/dev/null)" ]; then \

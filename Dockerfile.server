@@ -1,0 +1,34 @@
+# Dockerfile for running Tako VM server in a container
+# Usage: docker build -f Dockerfile.server -t tako-vm-server .
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Docker CLI to communicate with host Docker daemon
+RUN apt-get update && apt-get install -y \
+    docker.io \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY tako_vm/ ./tako_vm/
+COPY run_server.py .
+COPY tako_vm.yaml.example ./tako_vm.yaml
+
+# Create data directory
+RUN mkdir -p /root/.tako_vm
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run server
+CMD ["python", "run_server.py"]

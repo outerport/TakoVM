@@ -1,0 +1,57 @@
+# Tako VM Configuration
+# Copy to tako_vm.yaml and customize as needed
+
+# =============================================================================
+# Mode
+# =============================================================================
+production_mode: false     # Set true to disable auto-build, require versions
+
+# =============================================================================
+# Paths (optional - defaults work for most setups)
+# =============================================================================
+# data_dir: ~/.tako_vm
+# api_keys_file: ~/.tako_vm/api_keys.json
+# database_file: ~/.tako_vm/executions.db
+
+# =============================================================================
+# Authentication
+# =============================================================================
+require_auth: false        # Set true to require API key for all requests
+
+# =============================================================================
+# Queue & Workers
+# =============================================================================
+max_workers: 4             # Concurrent execution workers
+max_queue_size: 100        # Max pending jobs
+
+# =============================================================================
+# Output Limits
+# =============================================================================
+max_stdout_bytes: 65536          # 64KB
+max_stderr_bytes: 65536          # 64KB
+max_artifact_bytes: 10485760     # 10MB per artifact
+max_total_artifacts_bytes: 52428800  # 50MB total
+
+# =============================================================================
+# Input Limits
+# =============================================================================
+max_input_bytes: 1048576   # 1MB
+max_code_bytes: 102400     # 100KB
+
+# =============================================================================
+# Execution Limits
+# =============================================================================
+default_timeout: 30        # Default timeout (seconds)
+max_timeout: 300           # Maximum allowed timeout (seconds)
+
+# =============================================================================
+# Retention
+# =============================================================================
+execution_record_ttl_days: 30  # Days to keep execution records
+
+# =============================================================================
+# Docker
+# =============================================================================
+docker_image: code-executor:latest
+enable_seccomp: true       # Enable syscall filtering
+enable_userns: true        # Force non-root user inside container (defense-in-depth)
