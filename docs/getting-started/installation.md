@@ -118,7 +118,7 @@ tako-vm/
 ├── examples/             # Usage examples
 ├── docs/                 # Documentation
 ├── scripts/              # Utility scripts
-├── Dockerfile.executor   # Sandbox container image
+├── docker/                  # Container images
 ├── pyproject.toml        # Package configuration
 ├── tako_vm.yaml.example  # Config template
 └── demo.sh               # Interactive demo

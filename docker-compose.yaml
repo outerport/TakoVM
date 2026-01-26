@@ -13,7 +13,7 @@ services:
   tako-vm:
     build:
       context: .
-      dockerfile: Dockerfile.server
+      dockerfile: docker/Dockerfile.server
     image: tako-vm-server:latest
     container_name: tako-vm
     ports:
@@ -42,7 +42,7 @@ services:
   executor-build:
     build:
       context: .
-      dockerfile: Dockerfile.executor
+      dockerfile: docker/Dockerfile.executor
     image: code-executor:latest
     command: ["echo", "Executor image built"]
     profiles:

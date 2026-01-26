@@ -102,8 +102,8 @@ docker-compose logs -f tako-vm
 
 ### What Gets Built
 
-1. **tako-vm-server** - The API server (from `Dockerfile.server`)
-2. **code-executor** - The sandbox container for running code (from `Dockerfile.executor`)
+1. **tako-vm-server** - The API server (from `docker/Dockerfile.server`)
+2. **code-executor** - The sandbox container for running code (from `docker/Dockerfile.executor`)
 
 ### docker-compose.yaml
 
@@ -114,7 +114,7 @@ services:
   tako-vm:
     build:
       context: .
-      dockerfile: Dockerfile.server
+      dockerfile: docker/Dockerfile.server
     image: tako-vm-server:latest
     ports:
       - "8000:8000"
@@ -134,7 +134,7 @@ services:
   executor-build:
     build:
       context: .
-      dockerfile: Dockerfile.executor
+      dockerfile: docker/Dockerfile.executor
     image: code-executor:latest
     command: ["echo", "Executor image built"]
     profiles:
@@ -173,7 +173,7 @@ For scalable production deployments.
 
 ```bash
 # Build Tako VM server
-docker build -t your-registry/tako-vm:latest -f Dockerfile.server .
+docker build -t your-registry/tako-vm:latest -f docker/Dockerfile.server .
 docker push your-registry/tako-vm:latest
 
 # Build executor image
