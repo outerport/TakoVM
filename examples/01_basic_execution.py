@@ -42,7 +42,8 @@ print(f"Calculated: {x} + {y} = {result['sum']}")
         json={
             "code": code,
             "input_data": {"x": 10, "y": 20}
-        }
+        },
+        timeout=60
     )
 
     result = response.json()

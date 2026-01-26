@@ -16,7 +16,7 @@ def main():
 
     # 1. List available environments
     print("[1] Available environments:")
-    response = requests.get(f"{BASE_URL}/job-types")
+    response = requests.get(f"{BASE_URL}/job-types", timeout=10)
     for env in response.json():
         packages = ", ".join(env["requirements"]) or "(stdlib only)"
         print(f"    - {env['name']}: {packages}")
@@ -51,7 +51,8 @@ print(f"Processed {len(values)} values with numpy")
             "code": code,
             "input_data": {"values": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
             "job_type": "data-processing"  # <-- Specify environment
-        }
+        },
+        timeout=120
     )
 
     result = response.json()

@@ -15,7 +15,8 @@ def execute(code, input_data, **kwargs):
     """Helper to execute code and return result."""
     response = requests.post(
         f"{BASE_URL}/execute",
-        json={"code": code, "input_data": input_data, **kwargs}
+        json={"code": code, "input_data": input_data, **kwargs},
+        timeout=kwargs.get("timeout", 30) + 10
     )
     return response.json()
 

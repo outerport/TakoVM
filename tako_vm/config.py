@@ -280,7 +280,6 @@ def find_config_file() -> Optional[Path]:
 
 class ConfigurationError(Exception):
     """Raised when configuration validation fails."""
-    pass
 
 
 def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
@@ -307,7 +306,7 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
 
     # Load from file if found
     if config_path and config_path.exists():
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             loaded = yaml.safe_load(f)
             if loaded:
                 config_dict = loaded
@@ -376,7 +375,7 @@ def validate_config_file(path: Path) -> List[str]:
     """
     errors = []
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             config_dict = yaml.safe_load(f)
         if config_dict:
             TakoVMConfig(**config_dict)

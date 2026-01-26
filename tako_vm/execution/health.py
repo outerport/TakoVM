@@ -10,8 +10,8 @@ import subprocess
 import time
 import threading
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Callable
+from dataclasses import dataclass
+from typing import Optional
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -136,7 +136,8 @@ class DockerCircuitBreaker:
             result = subprocess.run(
                 ["docker", "info"],
                 capture_output=True,
-                timeout=5.0
+                timeout=5.0,
+                check=False
             )
             healthy = result.returncode == 0
 
@@ -197,7 +198,8 @@ class DockerCleanup:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=30.0
+                timeout=30.0,
+                check=False
             )
 
             if result.returncode != 0:
@@ -213,7 +215,8 @@ class DockerCleanup:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=30.0
+                timeout=30.0,
+                check=False
             )
 
             containers_to_remove = set()
@@ -238,7 +241,8 @@ class DockerCleanup:
                     rm_result = subprocess.run(
                         ["docker", "rm", "-f", container_id],
                         capture_output=True,
-                        timeout=10.0
+                        timeout=10.0,
+                        check=False
                     )
                     if rm_result.returncode == 0:
                         removed += 1
@@ -271,7 +275,8 @@ class DockerCleanup:
                 ["docker", "image", "prune", "-f"],
                 capture_output=True,
                 text=True,
-                timeout=60.0
+                timeout=60.0,
+                check=False
             )
 
             if result.returncode == 0:

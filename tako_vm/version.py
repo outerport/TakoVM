@@ -168,7 +168,8 @@ class VersionManager:
                  '--format', '{{index .RepoDigests 0}}'],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                check=False
             )
 
             if result.returncode == 0 and result.stdout.strip():
@@ -183,7 +184,8 @@ class VersionManager:
                  '--format', '{{.Id}}'],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                check=False
             )
 
             if result.returncode == 0:

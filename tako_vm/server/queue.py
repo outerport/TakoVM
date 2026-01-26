@@ -8,7 +8,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Dict, Callable, Any, TYPE_CHECKING
+from typing import Optional, Dict, TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 
@@ -177,8 +177,8 @@ class WorkerPool:
 
         try:
             self._queue.put_nowait(job)
-        except asyncio.QueueFull:
-            raise RuntimeError("Job queue is full, try again later")
+        except asyncio.QueueFull as exc:
+            raise RuntimeError("Job queue is full, try again later") from exc
 
         self._active_jobs[job_id] = job
         logger.info(f"Job {job_id} queued (queue size: {self._queue.qsize()})")

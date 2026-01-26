@@ -7,13 +7,13 @@ dataclasses and execute typed functions in isolated containers.
 Run from project root: python examples/example_tako_vm.py
 """
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dataclasses import dataclass
-import tako_vm
+import tako_vm  # pylint: disable=wrong-import-position
 
 
 # Define input/output types

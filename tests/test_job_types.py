@@ -2,12 +2,12 @@
 Test job types functionality.
 """
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dataclasses import dataclass
-import tako_vm
+import tako_vm  # pylint: disable=wrong-import-position
 
 
 @dataclass

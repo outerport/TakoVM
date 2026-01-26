@@ -105,7 +105,7 @@ def run_server(args):
     # Validate config before starting
     try:
         config = get_config()
-        print(f"Configuration loaded successfully")
+        print("Configuration loaded successfully")
         if config.production_mode:
             print("Running in PRODUCTION mode")
         else:
@@ -174,7 +174,7 @@ def validate_config(args):
         try:
             from tako_vm.config import load_config
             config = load_config(config_file)
-            print(f"\nSummary:")
+            print("\nSummary:")
             print(f"  Mode: {'production' if config.production_mode else 'development'}")
             print(f"  Workers: {config.max_workers}")
             print(f"  Max timeout: {config.max_timeout}s")

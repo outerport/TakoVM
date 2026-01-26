@@ -15,12 +15,12 @@ Example:
     ))
 """
 
+import logging
+import shutil
 import subprocess
 import tempfile
-import shutil
 from pathlib import Path
 from typing import Optional
-import logging
 
 from tako_vm.job_types import JobType, JobTypeRegistry
 
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 class BuildError(Exception):
     """Raised when container build fails."""
-    pass
 
 
 class ContainerBuilder:
@@ -138,7 +137,7 @@ CMD ["python", "-u", "/code/main.py"]
             # Write Dockerfile
             dockerfile_content = self.generate_dockerfile(job_type)
             dockerfile_path = build_path / "Dockerfile"
-            dockerfile_path.write_text(dockerfile_content)
+            dockerfile_path.write_text(dockerfile_content, encoding="utf-8")
 
             # Copy custom_libs
             custom_libs_dest = build_path / "custom_libs"
@@ -166,18 +165,20 @@ CMD ["python", "-u", "/code/main.py"]
             cmd.append(str(build_path))
 
             try:
-                result = subprocess.run(
+                subprocess.run(
                     cmd,
                     capture_output=not quiet,
                     text=True,
                     check=True
                 )
-                logger.info(f"Successfully built image: {job_type.image_name}")
+                logger.info("Successfully built image: %s", job_type.image_name)
                 return True
             except subprocess.CalledProcessError as e:
                 error_msg = e.stderr if e.stderr else str(e)
-                logger.error(f"Failed to build image: {error_msg}")
-                raise BuildError(f"Failed to build {job_type.name}: {error_msg}")
+                logger.error("Failed to build image: %s", error_msg)
+                raise BuildError(
+                    f"Failed to build {job_type.name}: {error_msg}"
+                ) from e
 
     def build_all(
         self,
@@ -217,7 +218,7 @@ CMD ["python", "-u", "/code/main.py"]
             True if image exists
         """
         try:
-            result = subprocess.run(
+            subprocess.run(
                 ["docker", "image", "inspect", job_type.image_name],
                 capture_output=True,
                 check=True

@@ -19,8 +19,7 @@ from datetime import datetime
 from tako_vm.job_types import JobType, JobTypeRegistry
 from tako_vm.models import ExecutionRecord, ResourceUsage, Artifact, ExecutionError
 from tako_vm.security import (
-    cap_output, sanitize_error, classify_error, compute_file_hash,
-    DEFAULT_MAX_STDOUT_BYTES, DEFAULT_MAX_STDERR_BYTES, DEFAULT_MAX_ARTIFACT_BYTES
+    cap_output, sanitize_error, classify_error, compute_file_hash
 )
 from tako_vm.config import get_config, TakoVMConfig
 from tako_vm.execution.health import get_circuit_breaker
@@ -84,7 +83,7 @@ class CodeExecutor:
             return False
 
         try:
-            from tako_vm.container_builder import ContainerBuilder
+            from tako_vm.execution.builder import ContainerBuilder
             builder = ContainerBuilder()
             builder.build(job_type, quiet=True)
             return True
@@ -480,7 +479,8 @@ class CodeExecutor:
         try:
             check = subprocess.run(
                 ["docker", "image", "inspect", image_name],
-                capture_output=True
+                capture_output=True,
+                check=False
             )
             if check.returncode != 0:
                 # Image doesn't exist - try to auto-build it
@@ -514,7 +514,8 @@ class CodeExecutor:
                 # Allowlist configured - check if proxy network exists
                 proxy_check = subprocess.run(
                     ["docker", "network", "inspect", "tako-proxy"],
-                    capture_output=True
+                    capture_output=True,
+                    check=False
                 )
                 if proxy_check.returncode == 0:
                     # Proxy network exists - use it for enforcement
@@ -580,7 +581,8 @@ class CodeExecutor:
                 cmd,
                 timeout=timeout,
                 capture_output=True,
-                text=True
+                text=True,
+                check=False
             )
 
             # Record success with circuit breaker

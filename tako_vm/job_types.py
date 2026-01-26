@@ -14,10 +14,10 @@ Example:
     ))
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
-from pathlib import Path
 import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
 
 
 @dataclass
@@ -108,7 +108,7 @@ class JobTypeRegistry:
     def _load(self):
         """Load job types from config file."""
         if self.config_path.exists():
-            with open(self.config_path) as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 data = json.load(f)
                 for item in data.get("job_types", []):
                     jt = JobType.from_dict(item)
@@ -119,7 +119,7 @@ class JobTypeRegistry:
         data = {
             "job_types": [jt.to_dict() for jt in self._job_types.values()]
         }
-        with open(self.config_path, "w") as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     def register(self, job_type: JobType) -> None:

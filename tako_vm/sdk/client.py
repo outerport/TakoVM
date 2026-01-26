@@ -23,10 +23,11 @@ Provides a typed interface for executing functions in isolated containers:
 """
 
 import inspect
-import requests
 import textwrap
-from dataclasses import dataclass, asdict, is_dataclass, fields
-from typing import TypeVar, Callable, Type, get_type_hints, Optional
+from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
+from typing import Callable, Optional, Type, TypeVar, get_type_hints
+
+import requests
 
 # Type variables for generic typing
 InputT = TypeVar('InputT')
@@ -47,7 +48,6 @@ class ExecutionResult:
 
 class TakoVMError(Exception):
     """Base exception for tako_vm errors."""
-    pass
 
 
 class ExecutionError(TakoVMError):
@@ -60,7 +60,6 @@ class ExecutionError(TakoVMError):
 
 class ValidationError(TakoVMError):
     """Raised when input/output validation fails."""
-    pass
 
 
 class TakoVM:
@@ -148,8 +147,10 @@ class TakoVM:
         # Deserialize output
         try:
             return output_type(**result.output)
-        except Exception as e:
-            raise ValidationError(f"Failed to deserialize output to {output_type.__name__}: {e}")
+        except (TypeError, ValueError) as e:
+            raise ValidationError(
+                f"Failed to deserialize output to {output_type.__name__}: {e}"
+            ) from e
 
     def send_raw(
         self,
@@ -257,8 +258,8 @@ _execute()
 
         for field in fields(cls):
             type_name = self._get_type_name(field.type)
-            if field.default is not field.default_factory:
-                if field.default is not dataclass.MISSING:
+            if field.default_factory is MISSING:
+                if field.default is not MISSING:
                     lines.append(f"    {field.name}: {type_name} = {repr(field.default)}")
                 else:
                     lines.append(f"    {field.name}: {type_name}")
@@ -325,7 +326,7 @@ _execute()
 
     def health(self) -> dict:
         """Check API health status."""
-        response = requests.get(f"{self.base_url}/health")
+        response = requests.get(f"{self.base_url}/health", timeout=10)
         response.raise_for_status()
         return response.json()
 
@@ -336,7 +337,7 @@ _execute()
         Returns:
             List of job type configurations
         """
-        response = requests.get(f"{self.base_url}/job-types")
+        response = requests.get(f"{self.base_url}/job-types", timeout=10)
         response.raise_for_status()
         return response.json()
 
@@ -350,7 +351,7 @@ _execute()
         Returns:
             Job type configuration
         """
-        response = requests.get(f"{self.base_url}/job-types/{name}")
+        response = requests.get(f"{self.base_url}/job-types/{name}", timeout=10)
         response.raise_for_status()
         return response.json()
 

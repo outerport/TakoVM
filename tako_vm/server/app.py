@@ -12,15 +12,14 @@ try:
 except ImportError:
     pass
 
-from typing import Optional, List
+import logging
+import time
+from contextlib import asynccontextmanager
+from typing import List, Optional
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
-from contextlib import asynccontextmanager
-import time
-import logging
-import subprocess
-import uuid
 
 from tako_vm.execution.worker import CodeExecutor
 from tako_vm.execution.health import get_circuit_breaker, startup_cleanup
@@ -302,8 +301,8 @@ async def execute_code(request: ExecuteRequest):
         )
 
     except Exception as e:
-        logger.error(f"Job {job_id} error: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Execution error: {str(e)}")
+        logger.error("Job %s error: %s", job_id, str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Execution error: {str(e)}") from e
 
 
 @app.post("/execute/async", response_model=AsyncExecuteResponse)
@@ -343,7 +342,7 @@ async def execute_code_async(request: ExecuteRequest, http_request: Request):
         return AsyncExecuteResponse(job_id=job_id, status="queued")
 
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
@@ -398,10 +397,10 @@ async def get_job_result(
 
         return ExecutionRecordResponse.from_record(record)
 
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Job not found")
-    except TimeoutError:
-        raise HTTPException(status_code=408, detail="Timeout waiting for job")
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="Job not found") from e
+    except TimeoutError as e:
+        raise HTTPException(status_code=408, detail="Timeout waiting for job") from e
 
 
 @app.post("/jobs/{job_id}/cancel")
@@ -568,8 +567,8 @@ async def build_job_type(name: str, version_tag: Optional[str] = None):
         }
 
     except Exception as e:
-        logger.error(f"Build failed for {name}: {e}")
-        raise HTTPException(status_code=500, detail=f"Build failed: {str(e)}")
+        logger.error("Build failed for %s: %s", name, e)
+        raise HTTPException(status_code=500, detail=f"Build failed: {str(e)}") from e
 
 
 @app.get("/pool/stats", response_model=PoolStatsResponse)

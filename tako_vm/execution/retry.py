@@ -8,7 +8,7 @@ import time
 import random
 import logging
 import functools
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Callable, Tuple, Type, Set
 
 logger = logging.getLogger(__name__)

@@ -7,8 +7,9 @@ Useful for long-running tasks.
 Run: python examples/02_async_execution.py
 """
 
-import requests
 import time
+
+import requests
 
 BASE_URL = "http://localhost:8000"
 
@@ -42,7 +43,8 @@ with open("/output/result.json", "w") as f:
         json={
             "code": code,
             "input_data": {"items": ["a", "b", "c"]}
-        }
+        },
+        timeout=30
     )
 
     job = response.json()
@@ -53,7 +55,7 @@ with open("/output/result.json", "w") as f:
     # 2. Poll for status
     print("\n[2] Polling for completion...")
     while True:
-        status_response = requests.get(f"{BASE_URL}/jobs/{job_id}")
+        status_response = requests.get(f"{BASE_URL}/jobs/{job_id}", timeout=10)
         status = status_response.json()
 
         print(f"    Status: {status['status']}")
@@ -65,7 +67,7 @@ with open("/output/result.json", "w") as f:
 
     # 3. Get result
     print("\n[3] Getting result...")
-    result_response = requests.get(f"{BASE_URL}/jobs/{job_id}/result")
+    result_response = requests.get(f"{BASE_URL}/jobs/{job_id}/result", timeout=30)
     result = result_response.json()
 
     print(f"    Success: {result.get('status') == 'success'}")
