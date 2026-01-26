@@ -52,17 +52,7 @@ info "Validating example config..."
 tako-vm validate tako_vm.yaml.example
 
 # ============================================================================
-header "3. ENV VAR API KEYS - Secrets without files"
-# ============================================================================
-
-info "Setting API key via environment variable..."
-export TAKO_VM_API_KEY="tvmk_demo_secret_key_12345"
-
-info "Config now shows env key loaded:"
-tako-vm config | grep -A2 "Authentication"
-
-# ============================================================================
-header "4. CONFIG VALIDATION - Pydantic catches errors"
+header "3. CONFIG VALIDATION - Pydantic catches errors"
 # ============================================================================
 
 info "Testing invalid config (max_workers=100, limit is 64)..."
@@ -81,7 +71,7 @@ EOF
 tako-vm validate /tmp/bad_timeout.yaml 2>&1 || success "Validation caught default > max timeout"
 
 # ============================================================================
-header "5. BUILD BASE IMAGE"
+header "4. BUILD BASE IMAGE"
 # ============================================================================
 
 info "Building code-executor base image..."
@@ -93,7 +83,7 @@ else
 fi
 
 # ============================================================================
-header "6. START SERVER (background)"
+header "5. START SERVER (background)"
 # ============================================================================
 
 info "Starting Tako VM server..."
@@ -114,7 +104,7 @@ else
 fi
 
 # ============================================================================
-header "7. EXECUTE CODE"
+header "6. EXECUTE CODE"
 # ============================================================================
 
 info "Simple execution - print sum..."
@@ -131,7 +121,7 @@ curl -s -X POST http://localhost:8000/execute \
     }' | python3 -m json.tool
 
 # ============================================================================
-header "8. SECURITY DEMO - Network isolation"
+header "7. SECURITY DEMO - Network isolation"
 # ============================================================================
 
 info "Testing network access (should fail - default is isolated)..."
@@ -147,7 +137,7 @@ if echo "$RESULT" | grep -q "error\|false"; then
 fi
 
 # ============================================================================
-header "9. RESOURCE LIMITS"
+header "8. RESOURCE LIMITS"
 # ============================================================================
 
 info "Testing memory limit (trying to allocate 1GB in 512MB container)..."
@@ -169,7 +159,7 @@ curl -s -X POST http://localhost:8000/execute \
     }' | python3 -m json.tool
 
 # ============================================================================
-header "10. CLEANUP"
+header "9. CLEANUP"
 # ============================================================================
 
 info "Stopping server..."
@@ -185,7 +175,6 @@ print -P "
 %F{green}Tako VM Features Demonstrated:%f
   - uv-based installation
   - YAML configuration with Pydantic validation
-  - API keys via environment variables
   - Config validation with clear error messages
   - Docker-based code execution
   - Network isolation (--network=none)
@@ -194,7 +183,7 @@ print -P "
 
 %F{cyan}Next steps:%f
   - Try job types: data-processing, ml-inference, api-client
-  - Enable auth: require_auth: true
   - Production mode: production_mode: true
   - Configure allowed_hosts for network-enabled jobs
+  - Check /health endpoint for circuit breaker status
 "
