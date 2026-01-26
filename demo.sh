@@ -75,8 +75,8 @@ header "4. BUILD BASE IMAGE"
 # ============================================================================
 
 info "Building code-executor base image..."
-if [[ -f "Dockerfile" ]]; then
-    docker build -t code-executor:latest -f Dockerfile . --quiet
+if [[ -f "Dockerfile.executor" ]]; then
+    docker build -t code-executor:latest -f Dockerfile.executor . --quiet
     success "Base image built"
 else
     warn "Dockerfile not found, skipping image build"

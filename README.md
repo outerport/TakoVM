@@ -266,7 +266,7 @@ tako-vm/
 │   └── job_types.py         # Job type definitions
 ├── tako_vm.yaml.example     # Example configuration
 ├── demo.sh                  # Interactive demo script
-├── Dockerfile               # Base container image
+├── Dockerfile.executor      # Sandbox container image
 └── pyproject.toml           # Package definition
 ```
 

@@ -42,7 +42,7 @@ services:
   executor-build:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.executor
     image: code-executor:latest
     command: ["echo", "Executor image built"]
     profiles:

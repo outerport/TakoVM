@@ -103,7 +103,7 @@ docker-compose logs -f tako-vm
 ### What Gets Built
 
 1. **tako-vm-server** - The API server (from `Dockerfile.server`)
-2. **code-executor** - The sandbox container for running code (from `Dockerfile`)
+2. **code-executor** - The sandbox container for running code (from `Dockerfile.executor`)
 
 ### docker-compose.yaml
 
@@ -134,7 +134,7 @@ services:
   executor-build:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.executor
     image: code-executor:latest
     command: ["echo", "Executor image built"]
     profiles:
