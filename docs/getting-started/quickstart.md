@@ -5,10 +5,14 @@ This guide walks you through executing your first code in Tako VM.
 ## Start the Server
 
 ```bash
-python run_server.py
+tako-vm server
 ```
 
-The server starts on `http://localhost:8000` by default.
+The server starts on `http://localhost:8000` by default. Use `--port` to change:
+
+```bash
+tako-vm server --port 9000
+```
 
 ## Execute Code
 

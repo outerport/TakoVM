@@ -25,7 +25,7 @@ fi
 echo "Docker is installed and running"
 
 if ! command -v python3 &> /dev/null; then
-    echo "Python 3 is not installed. Please install Python 3.11+."
+    echo "Python 3 is not installed. Please install Python 3.9+."
     exit 1
 fi
 
@@ -44,12 +44,18 @@ echo "Docker image built successfully"
 
 echo ""
 echo "========================================="
-echo "Installing Python dependencies"
+echo "Installing Tako VM"
 echo "========================================="
 
-pip install -r requirements.txt
+if command -v uv &> /dev/null; then
+    echo "Using uv for installation..."
+    uv pip install -e ".[server]"
+else
+    echo "Using pip for installation..."
+    pip install -e ".[server]"
+fi
 
-echo "Dependencies installed"
+echo "Tako VM installed"
 
 echo ""
 echo "========================================="
@@ -59,10 +65,10 @@ echo ""
 echo "Next steps:"
 echo ""
 echo "1. Start the API server:"
-echo "   python run_server.py"
+echo "   tako-vm server"
 echo ""
 echo "2. In another terminal, run the example:"
-echo "   python examples/example_tako_vm.py"
+echo "   python examples/01_basic_execution.py"
 echo ""
 echo "3. View API documentation:"
 echo "   Open http://localhost:8000/docs"

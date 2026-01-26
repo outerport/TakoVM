@@ -30,9 +30,13 @@ echo "  ✓ Python 3 available"
 
 # 2. Install dependencies
 echo ""
-echo "[2/5] Installing Python dependencies..."
-pip3 install -r requirements.txt -q
-echo "  ✓ Dependencies installed"
+echo "[2/5] Installing Tako VM..."
+if command -v uv &> /dev/null; then
+    uv pip install -e ".[server]" -q
+else
+    pip3 install -e ".[server]" -q
+fi
+echo "  ✓ Tako VM installed"
 
 # 3. Build Docker image
 echo ""
@@ -43,7 +47,7 @@ echo "  ✓ Docker image built"
 # 4. Start server in background
 echo ""
 echo "[4/5] Starting Tako VM server..."
-python3 run_server.py &
+tako-vm server &
 SERVER_PID=$!
 sleep 3
 
@@ -74,7 +78,7 @@ echo ""
 echo "=== Quick Start Complete ==="
 echo ""
 echo "To run the server:"
-echo "  python3 run_server.py"
+echo "  tako-vm server"
 echo ""
 echo "To execute code:"
 echo "  curl -X POST http://localhost:8000/execute -H 'Content-Type: application/json' -d '{\"code\": \"...\", \"input_data\": {}}'"

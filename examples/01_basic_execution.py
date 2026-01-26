@@ -7,7 +7,7 @@ Run: python examples/01_basic_execution.py
 
 import requests
 
-# Server URL (start with: python run_server.py)
+# Server URL (start with: tako-vm server)
 BASE_URL = "http://localhost:8000"
 
 

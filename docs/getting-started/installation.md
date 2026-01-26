@@ -4,10 +4,24 @@
 
 - **Docker** 20.10 or later
 - **Python** 3.9 or later
+- **uv** (recommended) or pip
 
 ## Install Tako VM
 
-### Option 1: Install from PyPI (Recommended)
+### Option 1: Install with uv (Recommended)
+
+```bash
+# Create virtual environment and install
+uv venv && source .venv/bin/activate
+uv pip install tako-vm[server]
+
+# Or from source
+git clone https://github.com/example/tako-vm.git
+cd tako-vm
+uv pip install -e ".[server]"
+```
+
+### Option 2: Install with pip
 
 ```bash
 # SDK client only - for connecting to an existing Tako VM server
@@ -18,16 +32,6 @@ pip install tako-vm[server]
 
 # All dependencies including dev tools
 pip install tako-vm[all]
-```
-
-### Option 2: Install from Git
-
-```bash
-# SDK only
-pip install git+https://github.com/example/tako-vm.git
-
-# With server dependencies
-pip install "tako-vm[server] @ git+https://github.com/example/tako-vm.git"
 ```
 
 ### Option 3: Install from Source
@@ -60,14 +64,18 @@ This builds the base execution container with Python 3.11.
 ```bash
 tako-vm version
 # tako-vm 2.0.0
+
+tako-vm --help
+# Shows all available commands
 ```
 
 ### Start the Server
 
 ```bash
 tako-vm server
-# or
-python run_server.py
+# or with options
+tako-vm server --port 9000
+tako-vm --config my-config.yaml server
 ```
 
 ### Check Server Health
@@ -102,14 +110,18 @@ After installation, your directory should look like:
 
 ```
 tako-vm/
-├── tako_vm/           # Main package
-├── examples/          # Usage examples
-├── docs/              # Documentation
-├── scripts/           # Utility scripts
-├── Dockerfile         # Container image
-├── pyproject.toml     # Package configuration
+├── tako_vm/              # Main package
+│   ├── cli.py            # CLI entry point
+│   ├── config.py         # Configuration (Pydantic)
+│   ├── server/           # API server
+│   └── execution/        # Docker execution
+├── examples/             # Usage examples
+├── docs/                 # Documentation
+├── scripts/              # Utility scripts
+├── Dockerfile            # Container image
+├── pyproject.toml        # Package configuration
 ├── tako_vm.yaml.example  # Config template
-└── run_server.py      # Server entry point
+└── demo.sh               # Interactive demo
 ```
 
 ## Troubleshooting
@@ -142,6 +154,18 @@ If port 8000 is busy:
 ```bash
 # Use a different port
 tako-vm server --port 8001
+```
+
+### Config Validation Errors
+
+If you get config errors:
+
+```bash
+# Validate your config file
+tako-vm validate my-config.yaml
+
+# Show current configuration
+tako-vm config
 ```
 
 ## Next Steps
