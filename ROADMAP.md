@@ -1,6 +1,6 @@
 # Tako VM Roadmap
 
-## Current Status: v2.0.0
+## Current Status: v2.1.0
 
 Production-ready sandbox runtime with:
 - ✅ Docker container isolation
@@ -9,6 +9,10 @@ Production-ready sandbox runtime with:
 - ✅ Seccomp syscall filtering
 - ✅ YAML configuration
 - ✅ Multiple execution environments
+- ✅ Circuit breaker for Docker availability
+- ✅ Dead letter queue for failed jobs
+- ✅ Correlation IDs for request tracing
+- ✅ Structured logging with JSON format
 
 ---
 
@@ -21,7 +25,6 @@ Production-ready sandbox runtime with:
 | **gVisor support** | High | Add `docker_runtime: runsc` config option for stronger isolation |
 | Kata Containers support | Medium | Lightweight VM isolation |
 | User namespace remapping | Medium | Run containers with mapped UIDs |
-| Network policy options | Low | Allow controlled egress for specific environments |
 
 ### Scalability
 
@@ -29,14 +32,13 @@ Production-ready sandbox runtime with:
 |---------|----------|-------------|
 | Redis queue backend | Medium | Replace in-memory queue for distributed deployments |
 | Horizontal scaling | Medium | Multiple Tako VM instances with shared state |
-| Job priority levels | Low | Priority queue for different API keys |
+| Job priority levels | Low | Priority queue for different job types |
 
 ### Developer Experience
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
 | Web UI dashboard | Medium | View jobs, logs, metrics |
-| CLI tool | Medium | `tako-vm submit`, `tako-vm status` commands |
 | Webhook notifications | Low | Notify on job completion |
 | OpenAPI spec | Low | Auto-generated API documentation |
 
@@ -45,7 +47,6 @@ Production-ready sandbox runtime with:
 | Feature | Priority | Description |
 |---------|----------|-------------|
 | Prometheus metrics | Medium | `/metrics` endpoint |
-| Structured logging | Medium | JSON logs with correlation IDs |
 | Tracing support | Low | OpenTelemetry integration |
 
 ---
