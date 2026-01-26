@@ -18,23 +18,59 @@ from tako_vm.storage import ExecutionStorage
 
 class APIKeyManager:
     """
-    Manages API keys with file-based persistence and hot-reload.
+    Manages API keys with file-based persistence, hot-reload, and env var support.
 
     Keys are stored hashed (SHA256) and never in plain text.
+    Supports loading keys from:
+    - File (api_keys.json) - persistent, supports CRUD operations
+    - Environment variables - immutable, takes precedence for verification
     """
 
-    def __init__(self, keys_file: Path):
+    def __init__(self, keys_file: Path, env_keys: Optional[list] = None):
         """
         Initialize key manager.
 
         Args:
             keys_file: Path to JSON file storing API keys
+            env_keys: Optional list of API keys from environment variables
+                      Each item: {"name": "key-name", "key": "tvmk_xxx", ...}
         """
         self.keys_file = keys_file
         self._keys: Dict[str, APIKey] = {}
         self._key_hash_to_id: Dict[str, str] = {}
+        self._env_key_hashes: set = set()  # Track which keys came from env
         self._last_modified: float = 0
+        self._load_env_keys(env_keys or [])
         self._load()
+
+    def _load_env_keys(self, env_keys: list) -> None:
+        """Load API keys from environment variables."""
+        for i, key_data in enumerate(env_keys):
+            if not isinstance(key_data, dict):
+                continue
+
+            raw_key = key_data.get("key", "")
+            if not raw_key:
+                continue
+
+            key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+            key_id = f"env-{i}-{key_hash[:8]}"
+
+            api_key = APIKey(
+                key_id=key_id,
+                key_hash=key_hash,
+                name=key_data.get("name", f"env-key-{i}"),
+                tenant_id=key_data.get("tenant_id"),
+                rate_limit_per_minute=key_data.get("rate_limit_per_minute", 60),
+                rate_limit_per_hour=key_data.get("rate_limit_per_hour", 1000),
+                max_concurrent_jobs=key_data.get("max_concurrent_jobs", 5),
+                allowed_job_types=key_data.get("allowed_job_types", ["*"]),
+                expires_at=None,  # Env keys don't expire
+            )
+
+            self._keys[key_id] = api_key
+            self._key_hash_to_id[key_hash] = key_id
+            self._env_key_hashes.add(key_hash)
 
     def _load(self) -> None:
         """Load keys from JSON file."""

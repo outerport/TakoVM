@@ -6,11 +6,12 @@ Tako VM executes untrusted Python code in isolated Docker containers with enterp
 
 ## Features
 
-- **Secure Isolation** - Network isolation, read-only filesystem, seccomp filtering
+- **Secure Isolation** - Network isolation, non-root execution, seccomp filtering
+- **Job Types** - Pre-configured environments with specific packages and limits
 - **Worker Pool** - Concurrent execution with configurable parallelism
 - **API Authentication** - API keys with rate limiting
 - **Audit Trail** - Full execution records with timing and artifacts
-- **Multiple Environments** - Pre-configured containers with different packages
+- **Network Control** - Per-job-type network access with domain allowlists
 - **Typed SDK** - Python client with dataclass serialization
 
 ## Installation

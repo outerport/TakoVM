@@ -462,11 +462,40 @@ class CodeExecutor:
         cmd = [
             "docker", "run",
             "--rm",
-            "--network=none",
             "--read-only",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
         ]
+
+        # Network isolation (default: no network for security)
+        if job_type.network_enabled:
+            if job_type.allowed_hosts:
+                # Allowlist configured - check if proxy network exists
+                proxy_check = subprocess.run(
+                    ["docker", "network", "inspect", "tako-proxy"],
+                    capture_output=True
+                )
+                if proxy_check.returncode == 0:
+                    # Proxy network exists - use it for enforcement
+                    cmd.append("--network=tako-proxy")
+                    allowed_hosts_str = ",".join(job_type.allowed_hosts)
+                    cmd.append(f"--env=TAKO_ALLOWED_HOSTS={allowed_hosts_str}")
+                    cmd.append("--env=HTTP_PROXY=http://tako-proxy:3128")
+                    cmd.append("--env=HTTPS_PROXY=http://tako-proxy:3128")
+                    cmd.append("--env=NO_PROXY=localhost,127.0.0.1")
+                else:
+                    # Proxy not configured - warn and use bridge (no enforcement)
+                    logger.warning(
+                        f"Job type '{job_type.name}' has allowed_hosts configured but "
+                        "tako-proxy network not found. Network access is UNRESTRICTED. "
+                        "Set up egress proxy for enforcement: scripts/proxy/docker-compose.yaml"
+                    )
+                    cmd.append("--network=bridge")
+            else:
+                # No allowlist - unrestricted network access
+                cmd.append("--network=bridge")
+        else:
+            cmd.append("--network=none")  # Complete network isolation
 
         # Run as non-root user inside container (uid 1000 = sandbox user)
         # This ensures code never runs as root, even inside the container
@@ -474,22 +503,23 @@ class CodeExecutor:
             cmd.append("--user=1000:1000")
 
         # Resource limits from job type
+        limits = self.config.container_limits
         cmd.extend([
             f"--memory={job_type.memory_limit}",
             f"--memory-swap={job_type.memory_limit}",
             f"--cpus={job_type.cpu_limit}",
-            "--pids-limit=100",
+            f"--pids-limit={limits.pids_limit}",
 
-            # Additional ulimits
-            "--ulimit=nofile=256:256",
-            "--ulimit=nproc=50:50",
-            "--ulimit=fsize=104857600",  # 100MB max file size
+            # Configurable ulimits
+            f"--ulimit=nofile={limits.nofile_soft}:{limits.nofile_hard}",
+            f"--ulimit=nproc={limits.nproc_soft}:{limits.nproc_hard}",
+            f"--ulimit=fsize={limits.fsize}",
 
             # Mounts
             f"--mount=type=bind,source={code_dir.absolute()},target=/code,readonly",
             f"--mount=type=bind,source={input_dir.absolute()},target=/input,readonly",
             f"--mount=type=bind,source={output_dir.absolute()},target=/output",
-            "--tmpfs=/tmp:rw,noexec,nosuid,size=100m",
+            f"--tmpfs=/tmp:rw,noexec,nosuid,size={limits.tmpfs_size}",
         ])
 
         # Add seccomp profile if enabled and exists

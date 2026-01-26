@@ -53,7 +53,10 @@ async def lifespan(app: FastAPI):
     state.executor = CodeExecutor(registry=state.registry, config=state.config)
     state.storage = ExecutionStorage(state.config.database_file)
     state.storage.init()
-    state.key_manager = APIKeyManager(state.config.api_keys_file)
+    state.key_manager = APIKeyManager(
+        state.config.api_keys_file,
+        env_keys=state.config.api_keys_from_env
+    )
     state.rate_limiter = RateLimiter(state.storage)
     state.worker_pool = WorkerPool(
         executor=state.executor,
@@ -62,6 +65,10 @@ async def lifespan(app: FastAPI):
         max_queue_size=state.config.max_queue_size
     )
     await state.worker_pool.start()
+
+    env_key_count = len(state.config.api_keys_from_env)
+    if env_key_count > 0:
+        logger.info(f"Loaded {env_key_count} API key(s) from environment")
 
     logger.info(f"Tako VM ready (production_mode={state.config.production_mode})")
 

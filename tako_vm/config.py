@@ -1,13 +1,16 @@
 """
 Configuration management for Tako VM.
 
-Loads configuration from YAML file with optional env var overrides for secrets.
+Uses Pydantic for validation with strict bounds checking.
+Loads configuration from YAML file with optional env var overrides.
 """
 
 import os
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 import yaml
+from pydantic import BaseModel, Field, field_validator, model_validator
+
 
 # Default config file locations (searched in order)
 CONFIG_SEARCH_PATHS = [
@@ -26,163 +29,263 @@ def get_default_data_dir() -> Path:
     return Path.home() / '.tako_vm'
 
 
-# Default configuration values
-DEFAULTS = {
-    # Mode
-    "production_mode": False,
+# =============================================================================
+# Pydantic Configuration Models with Validation
+# =============================================================================
 
-    # Paths
-    "data_dir": str(get_default_data_dir()),
-    "api_keys_file": None,  # Defaults to data_dir/api_keys.json
-    "database_file": None,  # Defaults to data_dir/executions.db
-    "seccomp_profile_path": None,  # Uses bundled profile
+class ContainerLimits(BaseModel):
+    """Container resource limits with validation bounds."""
+
+    # File descriptor limits
+    nofile_soft: int = Field(default=256, ge=64, le=65536)
+    nofile_hard: int = Field(default=256, ge=64, le=65536)
+
+    # Process limits
+    nproc_soft: int = Field(default=50, ge=10, le=1000)
+    nproc_hard: int = Field(default=50, ge=10, le=1000)
+
+    # Max file size in bytes (default 100MB)
+    fsize: int = Field(default=104857600, ge=1048576, le=1073741824)
+
+    # tmpfs size for /tmp (e.g., "100m", "256m", "1g")
+    tmpfs_size: str = Field(default="100m")
+
+    # PIDs limit
+    pids_limit: int = Field(default=100, ge=10, le=1000)
+
+    @field_validator('tmpfs_size')
+    @classmethod
+    def validate_tmpfs_size(cls, v: str) -> str:
+        """Validate tmpfs size format and bounds."""
+        v = v.lower().strip()
+        if not v:
+            raise ValueError("tmpfs_size cannot be empty")
+
+        # Parse size
+        if v.endswith('g'):
+            size_mb = int(v[:-1]) * 1024
+        elif v.endswith('m'):
+            size_mb = int(v[:-1])
+        elif v.endswith('k'):
+            size_mb = int(v[:-1]) // 1024
+        else:
+            # Assume bytes
+            size_mb = int(v) // (1024 * 1024)
+
+        # Validate bounds (10MB to 2GB)
+        if size_mb < 10:
+            raise ValueError("tmpfs_size must be at least 10m")
+        if size_mb > 2048:
+            raise ValueError("tmpfs_size must be at most 2g")
+
+        return v
+
+    @model_validator(mode='after')
+    def validate_limits(self) -> 'ContainerLimits':
+        """Ensure hard limits >= soft limits."""
+        if self.nofile_hard < self.nofile_soft:
+            raise ValueError("nofile_hard must be >= nofile_soft")
+        if self.nproc_hard < self.nproc_soft:
+            raise ValueError("nproc_hard must be >= nproc_soft")
+        return self
+
+
+class JobTypeConfig(BaseModel):
+    """Job type configuration for embedding in main config."""
+
+    name: str = Field(..., min_length=1, max_length=64)
+    requirements: List[str] = Field(default_factory=list)
+    python_version: str = Field(default="3.11")
+    base_image: Optional[str] = None
+    shared_code: List[str] = Field(default_factory=list)
+    environment: Dict[str, str] = Field(default_factory=dict)
+    memory_limit: str = Field(default="512m")
+    cpu_limit: float = Field(default=1.0, ge=0.1, le=16.0)
+    timeout: int = Field(default=30, ge=1, le=3600)
+    network_enabled: bool = Field(default=False, description="Allow network access (security risk)")
+    allowed_hosts: List[str] = Field(default_factory=list, description="Allowlist of hosts container can reach (requires proxy)")
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate job type name format."""
+        if not v.replace('-', '').replace('_', '').isalnum():
+            raise ValueError("name must contain only alphanumeric, dash, or underscore")
+        return v
+
+    @field_validator('memory_limit')
+    @classmethod
+    def validate_memory_limit(cls, v: str) -> str:
+        """Validate memory limit format."""
+        v = v.lower().strip()
+        if not v:
+            raise ValueError("memory_limit cannot be empty")
+
+        # Parse and validate
+        if v.endswith('g'):
+            size_mb = int(v[:-1]) * 1024
+        elif v.endswith('m'):
+            size_mb = int(v[:-1])
+        else:
+            raise ValueError("memory_limit must end with 'm' or 'g'")
+
+        if size_mb < 64:
+            raise ValueError("memory_limit must be at least 64m")
+        if size_mb > 32768:  # 32GB max
+            raise ValueError("memory_limit must be at most 32g")
+
+        return v
+
+
+class TakoVMConfig(BaseModel):
+    """Tako VM configuration with full validation."""
+
+    # Mode
+    production_mode: bool = Field(default=False)
+
+    # Paths (stored as strings internally, exposed as Path via properties)
+    data_dir_str: str = Field(default_factory=lambda: str(get_default_data_dir()), alias="data_dir")
+    api_keys_file_str: Optional[str] = Field(default=None, alias="api_keys_file")
+    database_file_str: Optional[str] = Field(default=None, alias="database_file")
+    seccomp_profile_path_str: Optional[str] = Field(default=None, alias="seccomp_profile_path")
 
     # Authentication
-    "require_auth": False,
+    require_auth: bool = Field(default=False)
 
-    # Queue
-    "max_workers": 4,
-    "max_queue_size": 100,
+    # API Keys from environment (takes precedence over file)
+    # Can be set via TAKO_VM_API_KEYS env var as JSON array or comma-separated
+    api_keys_from_env: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # Output limits
-    "max_stdout_bytes": 65536,      # 64KB
-    "max_stderr_bytes": 65536,      # 64KB
-    "max_artifact_bytes": 10485760, # 10MB
-    "max_total_artifacts_bytes": 52428800,  # 50MB
-    "max_input_bytes": 1048576,     # 1MB
-    "max_code_bytes": 102400,       # 100KB
+    # Queue & Workers
+    max_workers: int = Field(default=4, ge=1, le=64)
+    max_queue_size: int = Field(default=100, ge=1, le=10000)
 
-    # Execution
-    "default_timeout": 30,
-    "max_timeout": 300,
+    # Output limits (with bounds)
+    max_stdout_bytes: int = Field(default=65536, ge=1024, le=104857600)      # 1KB to 100MB
+    max_stderr_bytes: int = Field(default=65536, ge=1024, le=104857600)      # 1KB to 100MB
+    max_artifact_bytes: int = Field(default=10485760, ge=1024, le=1073741824)  # 1KB to 1GB
+    max_total_artifacts_bytes: int = Field(default=52428800, ge=1024, le=10737418240)  # 1KB to 10GB
+
+    # Input limits
+    max_input_bytes: int = Field(default=1048576, ge=1024, le=104857600)     # 1KB to 100MB
+    max_code_bytes: int = Field(default=102400, ge=1024, le=10485760)        # 1KB to 10MB
+
+    # Execution limits
+    default_timeout: int = Field(default=30, ge=1, le=3600)
+    max_timeout: int = Field(default=300, ge=1, le=86400)
 
     # Retention
-    "execution_record_ttl_days": 30,
+    execution_record_ttl_days: int = Field(default=30, ge=1, le=3650)
 
     # Docker
-    "docker_image": "code-executor:latest",
-    "enable_seccomp": True,
-    "enable_userns": True,  # Force non-root execution (--user=1000:1000)
-}
+    docker_image: str = Field(default="code-executor:latest")
+    enable_seccomp: bool = Field(default=True)
+    enable_userns: bool = Field(default=True)
 
+    # Container limits (new!)
+    container_limits: ContainerLimits = Field(default_factory=ContainerLimits)
 
-class TakoVMConfig:
-    """Tako VM configuration loaded from YAML file."""
+    # Job types (new - can be defined in main config)
+    job_types: List[JobTypeConfig] = Field(default_factory=list)
 
-    def __init__(self, config_dict: dict):
-        """Initialize from config dictionary."""
-        self._config = {**DEFAULTS, **config_dict}
-        self._resolve_paths()
+    # Internal: resolved paths (set after validation)
+    _resolved_data_dir: Optional[Path] = None
+    _resolved_api_keys_file: Optional[Path] = None
+    _resolved_database_file: Optional[Path] = None
+    _resolved_seccomp_profile_path: Optional[Path] = None
 
-    def _resolve_paths(self):
-        """Convert path strings to Path objects and set defaults."""
-        # Convert data_dir to Path
-        self._config["data_dir"] = Path(self._config["data_dir"])
-        self._config["data_dir"].mkdir(parents=True, exist_ok=True)
+    model_config = {"extra": "forbid", "populate_by_name": True}  # Reject unknown keys, allow alias
 
-        # Set default paths relative to data_dir
-        data_dir = self._config["data_dir"]
+    @model_validator(mode='after')
+    def validate_timeouts(self) -> 'TakoVMConfig':
+        """Ensure default_timeout <= max_timeout."""
+        if self.default_timeout > self.max_timeout:
+            raise ValueError("default_timeout must be <= max_timeout")
+        return self
 
-        if self._config["api_keys_file"] is None:
-            self._config["api_keys_file"] = data_dir / "api_keys.json"
+    def resolve_paths(self) -> 'TakoVMConfig':
+        """Resolve all paths and create directories."""
+        # Data directory
+        self._resolved_data_dir = Path(self.data_dir_str)
+        self._resolved_data_dir.mkdir(parents=True, exist_ok=True)
+
+        # API keys file
+        if self.api_keys_file_str:
+            self._resolved_api_keys_file = Path(self.api_keys_file_str)
         else:
-            self._config["api_keys_file"] = Path(self._config["api_keys_file"])
+            self._resolved_api_keys_file = self._resolved_data_dir / "api_keys.json"
 
-        if self._config["database_file"] is None:
-            self._config["database_file"] = data_dir / "executions.db"
+        # Database file
+        if self.database_file_str:
+            self._resolved_database_file = Path(self.database_file_str)
         else:
-            self._config["database_file"] = Path(self._config["database_file"])
+            self._resolved_database_file = self._resolved_data_dir / "executions.db"
 
-        if self._config["seccomp_profile_path"] is None:
-            self._config["seccomp_profile_path"] = Path(__file__).parent / "seccomp_profile.json"
+        # Seccomp profile
+        if self.seccomp_profile_path_str:
+            self._resolved_seccomp_profile_path = Path(self.seccomp_profile_path_str)
         else:
-            self._config["seccomp_profile_path"] = Path(self._config["seccomp_profile_path"])
+            self._resolved_seccomp_profile_path = Path(__file__).parent / "seccomp_profile.json"
 
-    # Properties for type-safe access
-    @property
-    def production_mode(self) -> bool:
-        return self._config["production_mode"]
+        return self
 
+    # Backward-compatible properties that return Path objects
     @property
     def data_dir(self) -> Path:
-        return self._config["data_dir"]
+        """Get data directory as Path (backward compatible)."""
+        if self._resolved_data_dir is None:
+            self.resolve_paths()
+        return self._resolved_data_dir  # type: ignore
 
     @property
     def api_keys_file(self) -> Path:
-        return self._config["api_keys_file"]
+        """Get API keys file path (backward compatible)."""
+        if self._resolved_api_keys_file is None:
+            self.resolve_paths()
+        return self._resolved_api_keys_file  # type: ignore
 
     @property
     def database_file(self) -> Path:
-        return self._config["database_file"]
+        """Get database file path (backward compatible)."""
+        if self._resolved_database_file is None:
+            self.resolve_paths()
+        return self._resolved_database_file  # type: ignore
 
     @property
     def seccomp_profile_path(self) -> Path:
-        return self._config["seccomp_profile_path"]
+        """Get seccomp profile path (backward compatible)."""
+        if self._resolved_seccomp_profile_path is None:
+            self.resolve_paths()
+        return self._resolved_seccomp_profile_path  # type: ignore
+
+    # Aliases for new code (explicit _path suffix)
+    @property
+    def data_dir_path(self) -> Path:
+        return self.data_dir
 
     @property
-    def require_auth(self) -> bool:
-        return self._config["require_auth"]
+    def api_keys_file_path(self) -> Path:
+        return self.api_keys_file
 
     @property
-    def max_workers(self) -> int:
-        return self._config["max_workers"]
+    def database_file_path(self) -> Path:
+        return self.database_file
 
     @property
-    def max_queue_size(self) -> int:
-        return self._config["max_queue_size"]
-
-    @property
-    def max_stdout_bytes(self) -> int:
-        return self._config["max_stdout_bytes"]
-
-    @property
-    def max_stderr_bytes(self) -> int:
-        return self._config["max_stderr_bytes"]
-
-    @property
-    def max_artifact_bytes(self) -> int:
-        return self._config["max_artifact_bytes"]
-
-    @property
-    def max_total_artifacts_bytes(self) -> int:
-        return self._config["max_total_artifacts_bytes"]
-
-    @property
-    def max_input_bytes(self) -> int:
-        return self._config["max_input_bytes"]
-
-    @property
-    def max_code_bytes(self) -> int:
-        return self._config["max_code_bytes"]
-
-    @property
-    def default_timeout(self) -> int:
-        return self._config["default_timeout"]
-
-    @property
-    def max_timeout(self) -> int:
-        return self._config["max_timeout"]
-
-    @property
-    def execution_record_ttl_days(self) -> int:
-        return self._config["execution_record_ttl_days"]
-
-    @property
-    def docker_image(self) -> str:
-        return self._config["docker_image"]
-
-    @property
-    def enable_seccomp(self) -> bool:
-        return self._config["enable_seccomp"]
-
-    @property
-    def enable_userns(self) -> bool:
-        return self._config["enable_userns"]
+    def seccomp_profile_path_resolved(self) -> Path:
+        return self.seccomp_profile_path
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get config value by key."""
-        return self._config.get(key, default)
+        """Get config value by key (for backward compatibility)."""
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            return default
 
+
+# =============================================================================
+# Configuration Loading
+# =============================================================================
 
 def find_config_file() -> Optional[Path]:
     """Find config file from search paths."""
@@ -201,9 +304,14 @@ def find_config_file() -> Optional[Path]:
     return None
 
 
+class ConfigurationError(Exception):
+    """Raised when configuration validation fails."""
+    pass
+
+
 def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
     """
-    Load configuration from YAML file.
+    Load configuration from YAML file with validation.
 
     Search order:
     1. Explicit path argument
@@ -213,8 +321,11 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
     5. ~/.tako_vm/config.yaml
     6. /etc/tako_vm/config.yaml
     7. Built-in defaults
+
+    Raises:
+        ConfigurationError: If configuration validation fails
     """
-    config_dict = {}
+    config_dict: Dict[str, Any] = {}
 
     # Find config file
     if config_path is None:
@@ -235,18 +346,52 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
     if "TAKO_VM_DATABASE_FILE" in os.environ:
         config_dict["database_file"] = os.environ["TAKO_VM_DATABASE_FILE"]
 
-    return TakoVMConfig(config_dict)
+    # Parse API keys from environment variable
+    # Supports: TAKO_VM_API_KEYS='[{"name":"key1","key":"tvmk_xxx"}]' (JSON)
+    #       or: TAKO_VM_API_KEY='tvmk_xxx' (single key, auto-named)
+    api_keys_from_env = []
+
+    if "TAKO_VM_API_KEYS" in os.environ:
+        env_keys = os.environ["TAKO_VM_API_KEYS"].strip()
+        if env_keys:
+            try:
+                import json as json_module
+                api_keys_from_env = json_module.loads(env_keys)
+            except json_module.JSONDecodeError:
+                # Try comma-separated format: "tvmk_xxx,tvmk_yyy"
+                for i, key in enumerate(env_keys.split(",")):
+                    key = key.strip()
+                    if key:
+                        api_keys_from_env.append({"name": f"env-key-{i}", "key": key})
+
+    elif "TAKO_VM_API_KEY" in os.environ:
+        # Single key shorthand
+        single_key = os.environ["TAKO_VM_API_KEY"].strip()
+        if single_key:
+            api_keys_from_env.append({"name": "env-key", "key": single_key})
+
+    if api_keys_from_env:
+        config_dict["api_keys_from_env"] = api_keys_from_env
+
+    # Validate and create config
+    try:
+        config = TakoVMConfig(**config_dict)
+        config.resolve_paths()
+        return config
+    except Exception as e:
+        raise ConfigurationError(f"Invalid configuration: {e}") from e
 
 
 # Global config instance (lazy loaded)
 _config: Optional[TakoVMConfig] = None
+_config_path: Optional[Path] = None
 
 
 def get_config() -> TakoVMConfig:
     """Get global configuration instance."""
     global _config
     if _config is None:
-        _config = load_config()
+        _config = load_config(_config_path)
     return _config
 
 
@@ -254,3 +399,39 @@ def set_config(config: TakoVMConfig) -> None:
     """Set global configuration instance."""
     global _config
     _config = config
+
+
+def set_config_path(path: Optional[Path]) -> None:
+    """Set the config file path for lazy loading."""
+    global _config_path, _config
+    _config_path = path
+    _config = None  # Reset so next get_config() reloads
+
+
+def reset_config() -> None:
+    """Reset global config (useful for testing)."""
+    global _config, _config_path
+    _config = None
+    _config_path = None
+
+
+def validate_config_file(path: Path) -> List[str]:
+    """
+    Validate a config file without loading it globally.
+
+    Returns:
+        List of validation errors (empty if valid)
+    """
+    errors = []
+    try:
+        with open(path) as f:
+            config_dict = yaml.safe_load(f)
+        if config_dict:
+            TakoVMConfig(**config_dict)
+    except FileNotFoundError:
+        errors.append(f"Config file not found: {path}")
+    except yaml.YAMLError as e:
+        errors.append(f"Invalid YAML: {e}")
+    except Exception as e:
+        errors.append(str(e))
+    return errors

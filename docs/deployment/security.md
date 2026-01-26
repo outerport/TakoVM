@@ -30,7 +30,7 @@ Tako VM implements defense-in-depth to safely execute untrusted code.
 
 ### Network Isolation
 
-Containers have no network access:
+By default, containers have no network access:
 
 ```bash
 docker run --network=none ...
@@ -41,6 +41,21 @@ This prevents:
 - Command & control communication
 - Attacks on internal services
 - Cryptocurrency mining pools
+
+**Selective Network Access**
+
+For jobs that need network (e.g., API calls), configure per job type:
+
+```yaml
+job_types:
+  - name: api-client
+    network_enabled: true
+    allowed_hosts:
+      - "api.openai.com"
+      - "*.amazonaws.com"
+```
+
+The `allowed_hosts` field is advisory by default. For enforcement, set up the egress proxy (see `scripts/proxy/`).
 
 ### Read-Only Filesystem
 
@@ -60,13 +75,21 @@ All Linux capabilities are dropped:
 docker run --cap-drop=ALL --security-opt=no-new-privileges ...
 ```
 
-### Non-Root User
+### Non-Root Execution
 
-Code runs as unprivileged user:
+Code runs as unprivileged user (uid 1000) inside the container:
 
 ```dockerfile
-USER sandbox  # uid 1000
+# In Dockerfile
+USER sandbox
 ```
+
+```bash
+# At runtime (enforced by Tako VM)
+docker run --user=1000:1000 ...
+```
+
+This is controlled by `enable_userns: true` (default). Even if container code somehow modifies the Dockerfile or image, the `--user` flag at runtime ensures non-root execution.
 
 ### Ephemeral Containers
 
@@ -348,9 +371,11 @@ This separates the API server from the execution environment entirely, but adds 
 
 - [ ] Enable `require_auth: true`
 - [ ] Enable `enable_seccomp: true`
+- [ ] Enable `enable_userns: true` (non-root execution)
 - [ ] Use HTTPS in production
 - [ ] Set appropriate resource limits
 - [ ] Keep Docker updated
+- [ ] For network-enabled jobs, use `allowed_hosts` to restrict domains
 - [ ] Monitor for anomalies
 - [ ] Rotate API keys periodically
 - [ ] Review execution logs
