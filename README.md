@@ -6,10 +6,28 @@ A production-ready, secure Python code execution system that runs untrusted code
 
 Tako VM executes Python code in isolated Docker containers with:
 - **Security** - Network isolation, read-only filesystem, seccomp filtering, resource limits
-- **Concurrency** - Worker pool with configurable parallelism
-- **Authentication** - API key management with rate limiting
+- **Configurability** - Pydantic-validated YAML config with env var overrides
+- **Job Types** - Pre-configured environments with network control per job type
+- **Authentication** - API keys via environment variables or file-based management
 - **Audit Trail** - Full execution records with timing, artifacts, and error details
-- **Typed SDK** - Execute Python functions with dataclass input/output
+
+## Quick Start
+
+```zsh
+# Clone and install with uv
+git clone https://github.com/example/tako-vm.git && cd tako-vm
+uv venv && source .venv/bin/activate
+uv pip install -e ".[server]"
+
+# Build base image and start
+docker build -t code-executor:latest .
+tako-vm server
+```
+
+Or run the interactive demo:
+```bash
+./demo.sh
+```
 
 ## Installation
 
@@ -17,104 +35,181 @@ Tako VM executes Python code in isolated Docker containers with:
 
 - Docker 20.10+
 - Python 3.9+
+- [uv](https://github.com/astral-sh/uv) (recommended) or pip
 
-### Option 1: Install from PyPI
+### With uv (Recommended)
 
-```bash
-# SDK client only (for connecting to a Tako VM server)
-pip install tako-vm
-
-# Full installation with server
-pip install tako-vm[server]
-```
-
-### Option 2: Install from Source
-
-```bash
-git clone https://github.com/example/tako-vm.git
-cd tako-vm
-
-# SDK only
-pip install -e .
-
-# Full server installation
-pip install -e ".[server]"
-```
-
-### Build the Docker Image
-
-```bash
+```zsh
+uv venv && source .venv/bin/activate
+uv pip install -e ".[server]"
 docker build -t code-executor:latest .
 ```
 
-### 2. Start the Server
+### With pip
 
 ```bash
-python run_server.py
+pip install tako-vm[server]
+docker build -t code-executor:latest .
 ```
 
-### 3. Execute Code
+## CLI Commands
 
-```python
-import requests
+```bash
+tako-vm --help                    # Show all commands
+tako-vm server                    # Start the API server
+tako-vm server --port 9000        # Custom port
+tako-vm --config my.yaml server   # Use specific config file
 
-response = requests.post('http://localhost:8000/execute', json={
-    'code': '''
-import json
-with open("/input/data.json") as f:
-    data = json.load(f)
-result = {"sum": data["x"] + data["y"]}
-with open("/output/result.json", "w") as f:
-    json.dump(result, f)
-''',
-    'input_data': {'x': 10, 'y': 20}
-})
-print(response.json())
-# {'success': True, 'output': {'sum': 30}, ...}
+tako-vm config                    # Show current configuration
+tako-vm config --json             # Output as JSON
+tako-vm validate                  # Validate current config
+tako-vm validate my.yaml          # Validate specific file
+
+tako-vm status                    # Check server health
+tako-vm version                   # Show version
 ```
 
 ## Configuration
 
-Tako VM loads configuration from YAML files. Create `tako_vm.yaml` in your project directory:
+Tako VM uses YAML configuration with Pydantic validation. All values have sensible defaults.
+
+### Quick Setup
 
 ```yaml
 # tako_vm.yaml
 production_mode: false
 require_auth: false
 max_workers: 4
-max_queue_size: 100
 default_timeout: 30
 max_timeout: 300
 ```
 
-**Config search order:**
-1. `./tako_vm.yaml`
-2. `./config/tako_vm.yaml`
-3. `~/.tako_vm/config.yaml`
-4. `/etc/tako-vm/config.yaml`
+### Config File Search Order
 
-See `tako_vm.yaml.example` for all options.
+1. `TAKO_VM_CONFIG` environment variable
+2. `./tako_vm.yaml`
+3. `./config/tako_vm.yaml`
+4. `~/.tako_vm/config.yaml`
+5. `/etc/tako_vm/config.yaml`
 
-## Execution Environments
+### Environment Variables
 
-An **execution environment** (job type) is a pre-configured Docker container with specific packages:
+```bash
+# Override config file location
+export TAKO_VM_CONFIG=/path/to/config.yaml
 
-| Environment | Packages | Use Case |
-|-------------|----------|----------|
-| `default` | Python stdlib | Simple scripts |
-| `data-processing` | pandas, numpy | Data manipulation |
-| `ml-inference` | numpy, scikit-learn | ML inference |
+# Override paths
+export TAKO_VM_DATA_DIR=/var/lib/tako_vm
+export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/db.sqlite
 
-```python
-# Use a specific environment
-response = requests.post('http://localhost:8000/execute', json={
-    'code': '...',
-    'input_data': {...},
-    'job_type': 'data-processing'
-})
+# API keys (recommended for secrets)
+export TAKO_VM_API_KEY="tvmk_your_secret_key"
+
+# Multiple keys with options
+export TAKO_VM_API_KEYS='[
+  {"name": "prod", "key": "tvmk_xxx", "rate_limit_per_minute": 100},
+  {"name": "dev", "key": "tvmk_yyy", "rate_limit_per_minute": 10}
+]'
 ```
 
-## API Endpoints
+### Container Limits
+
+Fine-grained control over container resources:
+
+```yaml
+container_limits:
+  pids_limit: 100        # max processes (10-1000)
+  nofile_soft: 256       # file descriptors (64-65536)
+  nofile_hard: 256
+  nproc_soft: 50         # process limit (10-1000)
+  nproc_hard: 50
+  fsize: 104857600       # max file size: 100MB (1MB-1GB)
+  tmpfs_size: "100m"     # /tmp size (10m-2g)
+```
+
+### Full Example
+
+See [tako_vm.yaml.example](tako_vm.yaml.example) for all options with documentation.
+
+## Job Types
+
+Job types are pre-configured execution environments with specific dependencies and limits.
+
+### Built-in Types
+
+| Type | Packages | Network | Use Case |
+|------|----------|---------|----------|
+| `default` | stdlib only | isolated | Simple scripts |
+| `data-processing` | pandas, numpy | isolated | Data manipulation |
+| `ml-inference` | numpy, scikit-learn | isolated | ML inference |
+| `api-client` | requests, httpx | enabled | External API calls |
+
+### Define Custom Job Types
+
+```yaml
+job_types:
+  - name: data-processing
+    requirements:
+      - pandas
+      - numpy
+    memory_limit: "1g"
+    cpu_limit: 2.0
+    timeout: 60
+
+  - name: api-client
+    requirements:
+      - requests
+      - httpx
+    network_enabled: true
+    allowed_hosts:
+      - "api.openai.com"
+      - "api.anthropic.com"
+      - "*.amazonaws.com"
+```
+
+### Network Control
+
+By default, containers have **no network access** (`--network=none`).
+
+To enable network:
+```yaml
+job_types:
+  - name: my-api-job
+    network_enabled: true      # Allow outbound connections
+    allowed_hosts:             # Optional: restrict to specific hosts
+      - "api.example.com"
+```
+
+## API Usage
+
+### Execute Code
+
+```bash
+# Simple execution
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{"code": "print(1 + 1)", "input_data": {}}'
+
+# With job type
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "import pandas as pd; print(pd.__version__)",
+    "input_data": {},
+    "job_type": "data-processing"
+  }'
+
+# Async execution
+curl -X POST http://localhost:8000/execute/async \
+  -H "Content-Type: application/json" \
+  -d '{"code": "...", "input_data": {}}'
+# Returns: {"job_id": "abc123"}
+
+# Get result
+curl http://localhost:8000/jobs/abc123/result
+```
+
+### API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -123,19 +218,26 @@ response = requests.post('http://localhost:8000/execute', json={
 | `/jobs/{id}` | GET | Get job status |
 | `/jobs/{id}/result` | GET | Wait for job result |
 | `/jobs/{id}/cancel` | POST | Cancel pending/running job |
-| `/job-types` | GET | List environments |
+| `/job-types` | GET | List available job types |
 | `/health` | GET | Health check |
 
 ## Authentication
 
-Enable authentication in config:
+### Enable Auth
 
 ```yaml
 require_auth: true
 ```
 
-Create API keys via the API or programmatically:
+### Provide API Keys
 
+**Option 1: Environment Variable (Recommended)**
+```bash
+export TAKO_VM_API_KEY="tvmk_your_secret_key"
+tako-vm server
+```
+
+**Option 2: File-based**
 ```python
 from tako_vm.server.auth import APIKeyManager
 from pathlib import Path
@@ -145,45 +247,23 @@ raw_key, api_key = manager.create_key("my-project")
 print(f"API Key: {raw_key}")  # Save this - shown only once
 ```
 
-Use the key in requests:
+### Use in Requests
 
 ```bash
 curl -H "Authorization: Bearer tvmk_..." http://localhost:8000/execute ...
 ```
 
-## Security
+## Security Features
 
 | Feature | Description |
 |---------|-------------|
-| Network Isolation | `--network=none` |
+| Network Isolation | `--network=none` by default |
 | Read-Only Filesystem | `--read-only` with tmpfs for /tmp |
-| Seccomp Filtering | Syscall whitelist |
+| Seccomp Filtering | Syscall whitelist via seccomp profile |
 | Resource Limits | Memory, CPU, file size, process count |
-| Non-Root | Runs as `sandbox` user (uid 1000) |
-| Ephemeral | Container destroyed after each execution |
-
-## Project Structure
-
-```
-tako-vm/
-├── tako_vm/
-│   ├── server/              # HTTP API layer
-│   │   ├── app.py           # FastAPI application
-│   │   ├── auth.py          # API key auth & rate limiting
-│   │   └── queue.py         # Worker pool & job queue
-│   ├── execution/           # Docker execution layer
-│   │   ├── worker.py        # Container executor
-│   │   └── builder.py       # Image builder
-│   ├── sdk/                 # Python SDK
-│   │   └── client.py        # TakoVM client
-│   ├── config.py            # Configuration loader
-│   ├── models.py            # Data models
-│   ├── storage.py           # SQLite persistence
-│   └── job_types.py         # Environment definitions
-├── tako_vm.yaml.example     # Example configuration
-├── Dockerfile               # Base container image
-└── requirements.txt
-```
+| Non-Root Execution | Runs as uid 1000 inside container |
+| Capability Drop | `--cap-drop=ALL` |
+| No Privilege Escalation | `--security-opt=no-new-privileges` |
 
 ## SDK Usage
 
@@ -207,6 +287,31 @@ def add(input: Input) -> Output:
 
 result = tako_vm.send(add, Input(10, 20))
 print(result.result)  # 30
+```
+
+## Project Structure
+
+```
+tako-vm/
+├── tako_vm/
+│   ├── server/              # HTTP API layer
+│   │   ├── app.py           # FastAPI application
+│   │   ├── auth.py          # API key auth & rate limiting
+│   │   └── queue.py         # Worker pool & job queue
+│   ├── execution/           # Docker execution layer
+│   │   ├── worker.py        # Container executor
+│   │   └── builder.py       # Image builder
+│   ├── sdk/                 # Python SDK
+│   │   └── client.py        # TakoVM client
+│   ├── cli.py               # CLI entry point
+│   ├── config.py            # Pydantic configuration
+│   ├── models.py            # Data models
+│   ├── storage.py           # SQLite persistence
+│   └── job_types.py         # Job type definitions
+├── tako_vm.yaml.example     # Example configuration
+├── demo.sh                  # Interactive demo script
+├── Dockerfile               # Base container image
+└── pyproject.toml           # Package definition
 ```
 
 ## License
