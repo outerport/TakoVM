@@ -1,34 +1,47 @@
-# Dockerfile for running Tako VM server in a container
-# Usage: docker build -f Dockerfile.server -t tako-vm-server .
+# Tako VM API Server Container
+#
+# Build:
+#   docker build -f Dockerfile.server -t tako-vm-server .
+#
+# Run:
+#   docker run -d \
+#     -p 8000:8000 \
+#     -v /var/run/docker.sock:/var/run/docker.sock \
+#     -v $(pwd)/tako_vm.yaml:/app/tako_vm.yaml:ro \
+#     tako-vm-server
+#
+# Note: Docker socket access gives container root-equivalent access to host.
+# This is necessary for spawning executor containers.
 
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install Docker CLI to communicate with host Docker daemon
-RUN apt-get update && apt-get install -y \
+# Install Docker CLI (to spawn executor containers via host daemon)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     docker.io \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application
+# Copy package files
+COPY pyproject.toml README.md LICENSE ./
 COPY tako_vm/ ./tako_vm/
-COPY run_server.py .
+
+# Install Tako VM with server dependencies
+RUN pip install --no-cache-dir ".[server]"
+
+# Copy default config
 COPY tako_vm.yaml.example ./tako_vm.yaml
 
 # Create data directory
 RUN mkdir -p /root/.tako_vm
 
-# Expose port
+# Expose API port
 EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run server
-CMD ["python", "run_server.py"]
+# Run server via CLI
+CMD ["tako-vm", "server", "--host", "0.0.0.0", "--port", "8000"]
