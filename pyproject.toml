@@ -95,5 +95,7 @@ select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:urllib3 v2 only supports OpenSSL",
+]

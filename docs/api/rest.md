@@ -43,8 +43,21 @@ POST /execute
 | `input_data` | object | Yes | Input data (available at `/input/data.json`) |
 | `timeout` | integer | No | Timeout in seconds (default: 30) |
 | `job_type` | string | No | Environment name (default: "default") |
+| `requirements` | array | No | Python packages to install at runtime (e.g., `["pandas", "numpy>=1.20"]`) |
 
 ### Example Request
+
+```bash
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "import pandas as pd; print(pd.__version__)",
+    "input_data": {},
+    "requirements": ["pandas"]
+  }'
+```
+
+### Example with Input/Output
 
 ```bash
 curl -X POST http://localhost:8000/execute \
@@ -84,7 +97,24 @@ POST /execute/async
 
 ### Request Body
 
-Same as `/execute`.
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `code` | string | Yes | Python code to execute |
+| `input_data` | object | Yes | Input data (available at `/input/data.json`) |
+| `timeout` | integer | No | Timeout in seconds (default: 30) |
+| `job_type` | string | No | Environment name (default: "default") |
+| `requirements` | array | No | Python packages to install at runtime (e.g., `["pandas", "numpy>=1.20"]`) |
+| `idempotency_key` | string | No | Unique key for idempotent submission |
+
+### Idempotency
+
+When `idempotency_key` is provided:
+
+- If the key was never used before, the job is submitted normally
+- If the key was used with the **same** payload, returns the existing job
+- If the key was used with a **different** payload, returns `409 Conflict`
+
+This ensures safe retries without duplicate job execution.
 
 ### Response
 
@@ -92,6 +122,18 @@ Same as `/execute`.
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "queued"
+}
+```
+
+### Response (Idempotent Duplicate)
+
+If the same `idempotency_key` and payload are submitted again:
+
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "succeeded",
+  "message": "Existing job returned (idempotent)"
 }
 ```
 
@@ -120,10 +162,11 @@ GET /jobs/{job_id}
 
 | Status | Description |
 |--------|-------------|
-| `pending` | Queued, waiting for worker |
+| `pending` | Queued, waiting for worker (queue status) |
 | `running` | Currently executing |
-| `success` | Completed successfully |
-| `error` | Failed with error |
+| `queued` | Job queued (record status) |
+| `succeeded` | Completed successfully |
+| `failed` | Failed with error |
 | `timeout` | Exceeded time limit |
 | `oom` | Out of memory |
 | `cancelled` | Cancelled by user |
@@ -144,13 +187,14 @@ GET /jobs/{job_id}/result
 |-----------|------|---------|-------------|
 | `wait` | boolean | false | Wait for completion |
 | `timeout` | integer | 30 | Max seconds to wait (if wait=true) |
+| `view` | string | null | Response detail level (`full` for extended fields) |
 
-### Response
+### Response (Completed Job)
 
 ```json
 {
   "execution_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "success",
+  "status": "succeeded",
   "job_type": "default",
   "job_version": "latest",
   "created_at": "2024-01-15T10:30:00Z",
@@ -164,6 +208,147 @@ GET /jobs/{job_id}/result
   "error": null
 }
 ```
+
+### Response (Full View)
+
+When `?view=full` is specified, additional fields are included:
+
+```json
+{
+  "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "succeeded",
+  "job_type": "default",
+  "job_version": "latest",
+  "created_at": "2024-01-15T10:30:00Z",
+  "started_at": "2024-01-15T10:30:01Z",
+  "ended_at": "2024-01-15T10:30:02Z",
+  "duration_ms": 350,
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "output": {"sum": 30},
+  "error": null,
+  "job_ref": "default@sha256:a1b2c3d4e5f6",
+  "artifacts": [
+    {"name": "result.json", "size": 128, "content_type": "application/json"}
+  ],
+  "input_artifacts": [
+    {"name": "data.json", "size": 64, "content_type": "application/json"}
+  ],
+  "resource_usage": {
+    "cpu_time_ms": 250,
+    "memory_peak_mb": 64,
+    "io_read_bytes": 1024,
+    "io_write_bytes": 512
+  },
+  "code_hash": "sha256:abc123...",
+  "input_hash": "sha256:def456...",
+  "parent_execution_id": null,
+  "relationship": null,
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "idempotency_key": "my-unique-key"
+}
+```
+
+#### Extended Fields (view=full)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `job_ref` | string | Pinned environment reference (job_type@digest) |
+| `artifacts` | array | Output artifact metadata list |
+| `input_artifacts` | array | Input artifact metadata list |
+| `resource_usage` | object | Resource consumption metrics |
+| `code_hash` | string | SHA-256 hash of the submitted code |
+| `input_hash` | string | SHA-256 hash of the input data |
+| `parent_execution_id` | string | ID of parent execution (if rerun/fork) |
+| `relationship` | string | Relationship to parent (`rerun` or `fork`) |
+| `stdout_truncated` | boolean | Whether stdout was truncated |
+| `stderr_truncated` | boolean | Whether stderr was truncated |
+| `idempotency_key` | string | The idempotency key used for submission |
+
+### Response (Job In Progress)
+
+If `wait=false` and the job is still running:
+
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pending",
+  "message": "Job still in progress",
+  "queue_position": 3
+}
+```
+
+---
+
+## Rerun Job
+
+Rerun a previous execution with the same code and inputs.
+
+```
+POST /jobs/{job_id}/rerun
+```
+
+### Response
+
+```json
+{
+  "job_id": "661f9511-f30c-52e5-b827-557766551111",
+  "status": "queued",
+  "parent_execution_id": "550e8400-e29b-41d4-a716-446655440000",
+  "relationship": "rerun"
+}
+```
+
+The new job will have:
+- Same code as the original
+- Same input data as the original
+- Same job type and timeout settings
+- Lineage tracking back to the original execution
+
+---
+
+## Fork Job
+
+Fork a job with new code but the same inputs.
+
+```
+POST /jobs/{job_id}/fork
+```
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `code` | string | Yes | New Python code to execute |
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8000/jobs/550e8400-e29b-41d4-a716-446655440000/fork \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "import json\nwith open(\"/input/data.json\") as f: d=json.load(f)\nwith open(\"/output/result.json\",\"w\") as f: json.dump({\"product\":d[\"a\"]*d[\"b\"]},f)"
+  }'
+```
+
+### Response
+
+```json
+{
+  "job_id": "772fa622-g41d-63f6-c938-668877662222",
+  "status": "queued",
+  "parent_execution_id": "550e8400-e29b-41d4-a716-446655440000",
+  "relationship": "fork"
+}
+```
+
+The new job will have:
+- The new code provided in the request
+- Same input data as the original
+- Same job type and timeout settings
+- Lineage tracking back to the original execution
 
 ---
 
@@ -182,6 +367,84 @@ POST /jobs/{job_id}/cancel
   "status": "cancelled",
   "job_id": "550e8400-e29b-41d4-a716-446655440000"
 }
+```
+
+---
+
+## Get Artifact
+
+Download an artifact from a completed job.
+
+```
+GET /jobs/{job_id}/artifacts/{artifact_name}
+```
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `job_id` | string | The job/execution ID |
+| `artifact_name` | string | Name of the artifact file |
+
+### Response Headers
+
+| Header | Description |
+|--------|-------------|
+| `Content-Type` | MIME type of the artifact |
+| `Content-Length` | Size in bytes |
+| `ETag` | Content hash for caching |
+| `Content-Disposition` | `attachment; filename="{artifact_name}"` |
+
+### Conditional Requests
+
+Supports `If-None-Match` header with ETag for conditional requests:
+
+```bash
+curl -H "If-None-Match: \"abc123...\"" \
+  http://localhost:8000/jobs/550e8400.../artifacts/result.json
+```
+
+Returns `304 Not Modified` if the artifact hasn't changed.
+
+### Example Request
+
+```bash
+curl -O http://localhost:8000/jobs/550e8400-e29b-41d4-a716-446655440000/artifacts/result.json
+```
+
+---
+
+## Get Artifact Metadata
+
+Get metadata about an artifact without downloading it.
+
+```
+HEAD /jobs/{job_id}/artifacts/{artifact_name}
+```
+
+### Response Headers
+
+Same as `GET /jobs/{job_id}/artifacts/{artifact_name}`:
+
+| Header | Description |
+|--------|-------------|
+| `Content-Type` | MIME type of the artifact |
+| `Content-Length` | Size in bytes |
+| `ETag` | Content hash for caching |
+
+### Example Request
+
+```bash
+curl -I http://localhost:8000/jobs/550e8400-e29b-41d4-a716-446655440000/artifacts/result.json
+```
+
+### Example Response
+
+```
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 128
+ETag: "sha256:abc123def456..."
 ```
 
 ---
@@ -358,10 +621,36 @@ GET /executions
 | `job_type` | string | null | Filter by job type |
 | `limit` | integer | 100 | Max records (1-1000) |
 | `offset` | integer | 0 | Pagination offset |
+| `view` | string | null | Response detail level (`full` for extended fields) |
 
 ### Response
 
-Array of execution records (same format as job result).
+Paginated response with metadata:
+
+```json
+{
+  "items": [
+    {
+      "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "succeeded",
+      "job_type": "default",
+      "...": "..."
+    }
+  ],
+  "limit": 100,
+  "offset": 0,
+  "has_more": true,
+  "count": 100
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `items` | Array of execution records |
+| `limit` | Maximum records returned |
+| `offset` | Number of records skipped |
+| `has_more` | Whether more records exist |
+| `count` | Number of items in this response |
 
 ---
 
@@ -373,9 +662,15 @@ Get a specific execution record.
 GET /executions/{execution_id}
 ```
 
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `view` | string | null | Response detail level (`full` for extended fields) |
+
 ### Response
 
-Same format as job result.
+Same format as job result. When `?view=full` is specified, includes all extended fields documented in the [Get Job Result](#response-full-view) section.
 
 ---
 
@@ -421,24 +716,32 @@ GET /dlq
 
 ### Response
 
+Paginated response with metadata:
+
 ```json
-[
-  {
-    "id": 1,
-    "job_id": "550e8400-e29b-41d4-a716-446655440000",
-    "job_data": {
-      "code": "...",
-      "input_data": {},
-      "job_type": "default"
-    },
-    "error_type": "internal_error",
-    "error_message": "Docker daemon not responding",
-    "retry_count": 0,
-    "created_at": "2024-01-15T10:30:00Z",
-    "client_ip": "192.168.1.100",
-    "correlation_id": "abc-123-def"
-  }
-]
+{
+  "items": [
+    {
+      "id": 1,
+      "job_id": "550e8400-e29b-41d4-a716-446655440000",
+      "job_data": {
+        "code": "...",
+        "input_data": {},
+        "job_type": "default"
+      },
+      "error_type": "internal_error",
+      "error_message": "Docker daemon not responding",
+      "retry_count": 0,
+      "created_at": "2024-01-15T10:30:00Z",
+      "client_ip": "192.168.1.100",
+      "correlation_id": "abc-123-def"
+    }
+  ],
+  "limit": 100,
+  "offset": 0,
+  "has_more": false,
+  "count": 1
+}
 ```
 
 ---
@@ -484,6 +787,17 @@ Resource not found.
 }
 ```
 
+### 409 Conflict
+
+Idempotency key reused with different payload.
+
+```json
+{
+  "detail": "Idempotency key already used with different payload",
+  "existing_job_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
 ### 408 Request Timeout
 
 Timeout waiting for job completion.
@@ -506,10 +820,14 @@ Queue full or service degraded.
 
 ### 500 Internal Server Error
 
-Server error.
+Server error. Includes correlation ID for tracing.
 
 ```json
 {
-  "detail": "Internal server error"
+  "detail": "Internal server error",
+  "correlation_id": "abc-123-def-456"
 }
 ```
+
+!!! tip
+    Use the `correlation_id` to search server logs for debugging.

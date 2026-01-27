@@ -23,8 +23,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Shared workspace for job files (must match host path for Docker mounts)
       - /tmp/tako-vm-jobs:/tmp/tako-vm-jobs
-      # Optional: mount custom config
-      # - ./tako_vm.yaml:/app/tako_vm.yaml:ro
+      # Config with scaled worker settings (16 workers, 500 queue)
+      - ./tako_vm.yaml:/app/tako_vm.yaml:ro
       # Optional: persist data
       # - tako-vm-data:/root/.tako_vm
     environment:

@@ -185,8 +185,9 @@ class TakoVM:
         if result.success and result.output:
             try:
                 result.output = output_type(**result.output)
-            except Exception:
-                pass  # Keep as dict if deserialization fails
+            except (TypeError, ValueError, KeyError):
+                # Keep as dict if deserialization fails (type mismatch, missing fields, etc.)
+                pass
 
         return result
 

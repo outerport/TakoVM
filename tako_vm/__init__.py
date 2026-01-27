@@ -34,8 +34,13 @@ from tako_vm.sdk.client import (
 from tako_vm.job_types import JobType, JobTypeRegistry
 from tako_vm.models import ExecutionRecord, ResourceUsage, Artifact, JobVersion
 from tako_vm.config import TakoVMConfig, get_config
+from tako_vm.sandbox import Sandbox, SandboxResult, run as sandbox_run
 
 __all__ = [
+    # Sandbox (library-first interface)
+    "Sandbox",
+    "SandboxResult",
+    "sandbox_run",
     # Main SDK functions
     "send",
     "send_raw",

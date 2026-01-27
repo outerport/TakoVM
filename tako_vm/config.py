@@ -36,6 +36,8 @@ def get_default_data_dir() -> Path:
 class ContainerLimits(BaseModel):
     """Container resource limits with validation bounds."""
 
+    model_config = {"extra": "forbid"}
+
     # File descriptor limits
     nofile_soft: int = Field(default=256, ge=64, le=65536)
     nofile_hard: int = Field(default=256, ge=64, le=65536)
@@ -93,6 +95,8 @@ class ContainerLimits(BaseModel):
 class JobTypeConfig(BaseModel):
     """Job type configuration for embedding in main config."""
 
+    model_config = {"extra": "forbid"}
+
     name: str = Field(..., min_length=1, max_length=64)
     requirements: List[str] = Field(default_factory=list)
     python_version: str = Field(default="3.11")
@@ -141,10 +145,37 @@ class TakoVMConfig(BaseModel):
     """Tako VM configuration with full validation."""
 
     # Mode
-    production_mode: bool = Field(default=False)
+    production_mode: bool = Field(default=False, description="Strict mode requiring pre-built images")
+
+    # Logging
+    log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
+
+    # Server
+    server_host: str = Field(default="0.0.0.0", description="Server host to bind to")
+    server_port: int = Field(default=8000, ge=1, le=65535, description="Server port to bind to")
+
+    # Proxy network configuration (for network-enabled jobs)
+    proxy_network_name: str = Field(default="tako-proxy", description="Docker network name for proxy")
+    proxy_port: int = Field(default=3128, ge=1, le=65535, description="Proxy port number")
+
+    # Retry configuration
+    max_retry_attempts: int = Field(default=2, ge=1, le=10, description="Maximum retry attempts for transient failures")
+    retry_base_delay: float = Field(default=1.0, ge=0.1, le=60.0, description="Base delay between retries in seconds")
+
+    # Queue wait timeout
+    queue_wait_timeout: float = Field(default=1.0, ge=0.1, le=30.0, description="Queue wait timeout in seconds")
 
     # Paths (stored as strings internally, exposed as Path via properties)
     data_dir_str: str = Field(default_factory=lambda: str(get_default_data_dir()), alias="data_dir")
+
+    @field_validator('log_level')
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        """Validate log level is a valid Python logging level."""
+        valid_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+        if v.upper() not in valid_levels:
+            raise ValueError(f"log_level must be one of: {', '.join(sorted(valid_levels))}")
+        return v.upper()
     database_file_str: Optional[str] = Field(default=None, alias="database_file")
     seccomp_profile_path_str: Optional[str] = Field(default=None, alias="seccomp_profile_path")
 
@@ -172,7 +203,9 @@ class TakoVMConfig(BaseModel):
     # Docker
     docker_image: str = Field(default="code-executor:latest")
     enable_seccomp: bool = Field(default=True)
-    enable_userns: bool = Field(default=True)
+    # Note: Disabled by default because the entrypoint uses gosu to drop privileges
+    # If you're using an image without gosu, set this to True
+    enable_userns: bool = Field(default=False)
 
     # Container limits (new!)
     container_limits: ContainerLimits = Field(default_factory=ContainerLimits)

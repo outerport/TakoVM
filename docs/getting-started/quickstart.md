@@ -2,9 +2,59 @@
 
 This guide walks you through executing your first code in Tako VM.
 
-## Start the Server
+## Library Mode (Recommended for Development)
+
+The simplest way to use Tako VM - no server required:
 
 ```bash
+pip install tako-vm
+```
+
+```python
+from tako_vm import Sandbox
+
+# Basic execution
+with Sandbox() as sb:
+    result = sb.run("print('Hello from sandbox!')")
+    print(result.stdout)  # "Hello from sandbox!"
+
+# With dependencies
+with Sandbox() as sb:
+    result = sb.run("""
+import requests
+print(f"requests version: {requests.__version__}")
+""", requirements=["requests"])
+    print(result.stdout)
+
+# With input/output data
+with Sandbox() as sb:
+    result = sb.run("""
+import json
+with open("/input/data.json") as f:
+    data = json.load(f)
+result = {"sum": data["x"] + data["y"]}
+with open("/output/result.json", "w") as f:
+    json.dump(result, f)
+print("Done!")
+""", input_data={"x": 10, "y": 20})
+
+    print(result.stdout)   # "Done!"
+    print(result.output)   # {"sum": 30}
+```
+
+The first run builds the Docker image automatically (~30 seconds one-time setup).
+
+## Server Mode (For Production)
+
+For production workloads with job queuing, retries, and persistence:
+
+### Start the Server
+
+```bash
+# Build the executor image first
+docker build -t code-executor:latest -f docker/Dockerfile.executor .
+
+# Start the server
 tako-vm server
 ```
 
@@ -14,20 +64,20 @@ The server starts on `http://localhost:8000` by default. Use `--port` to change:
 tako-vm server --port 9000
 ```
 
-## Execute Code
+### Execute Code via API
 
-### Using curl
+#### Using curl
 
 ```bash
 curl -X POST http://localhost:8000/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "code": "import json\nwith open(\"/input/data.json\") as f: data=json.load(f)\nresult={\"sum\": data[\"x\"] + data[\"y\"]}\nwith open(\"/output/result.json\",\"w\") as f: json.dump(result,f)",
-    "input_data": {"x": 10, "y": 20}
+    "code": "print(1 + 1)",
+    "requirements": ["requests"]
   }'
 ```
 
-### Using Python
+#### Using Python
 
 ```python
 import requests
@@ -56,7 +106,8 @@ response = requests.post(
     "http://localhost:8000/execute",
     json={
         "code": code,
-        "input_data": {"x": 10, "y": 20}
+        "input_data": {"x": 10, "y": 20},
+        "requirements": ["numpy"]  # Optional: ad-hoc dependencies
     }
 )
 

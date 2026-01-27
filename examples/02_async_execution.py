@@ -60,7 +60,7 @@ with open("/output/result.json", "w") as f:
 
         print(f"    Status: {status['status']}")
 
-        if status["status"] in ["success", "error", "timeout"]:
+        if status["status"] in ["succeeded", "failed", "timeout", "oom", "cancelled"]:
             break
 
         time.sleep(0.5)
@@ -70,7 +70,7 @@ with open("/output/result.json", "w") as f:
     result_response = requests.get(f"{BASE_URL}/jobs/{job_id}/result", timeout=30)
     result = result_response.json()
 
-    print(f"    Success: {result.get('status') == 'success'}")
+    print(f"    Success: {result.get('status') == 'succeeded'}")
     print(f"    Output: {result.get('output')}")
 
 

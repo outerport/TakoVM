@@ -4,10 +4,13 @@ Security utilities for Tako VM.
 Provides output capping, error sanitization, and artifact validation.
 """
 
+import logging
 import re
 import hashlib
 from pathlib import Path
 from typing import List, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Patterns to sanitize from error messages (pattern, replacement)
 SANITIZE_PATTERNS: List[Tuple[str, str]] = [
@@ -229,6 +232,19 @@ def classify_error(
     if "indentationerror" in stderr_lower:
         return "syntax_error", sanitize_error(stderr[:200] if stderr else "Indentation error")
 
+    # Dependency installation errors (uv/pip failures)
+    if "no matching distribution" in stderr_lower or "could not find" in stderr_lower:
+        return "dependency_error", "Failed to install required package (not found)"
+
+    if "error: externally-managed-environment" in stderr_lower:
+        return "dependency_error", "Package installation failed (environment issue)"
+
+    if "failed to download" in stderr_lower or "failed to fetch" in stderr_lower:
+        return "dependency_error", "Failed to download package (network issue)"
+
+    if "resolving dependencies" in stderr_lower and "conflict" in stderr_lower:
+        return "dependency_error", "Package dependency conflict"
+
     # Import errors
     if "importerror" in stderr_lower or "modulenotfounderror" in stderr_lower:
         return "import_error", sanitize_error(stderr[:200] if stderr else "Import error")
@@ -342,3 +358,227 @@ def is_safe_filename(filename: str) -> bool:
         return False
 
     return True
+
+
+# Pattern for valid environment variable names (POSIX)
+_ENV_KEY_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+# Characters that could be dangerous in Docker env values
+_DANGEROUS_ENV_CHARS = re.compile(r'[\x00-\x1f\x7f`$\\]')
+
+
+def validate_env_key(key: str) -> bool:
+    """
+    Validate environment variable key is safe for Docker.
+
+    Args:
+        key: Environment variable name
+
+    Returns:
+        True if key is valid
+    """
+    if not key or len(key) > 256:
+        return False
+    return bool(_ENV_KEY_PATTERN.match(key))
+
+
+def validate_env_value(value: str) -> bool:
+    """
+    Validate environment variable value is safe for Docker.
+
+    Args:
+        value: Environment variable value
+
+    Returns:
+        True if value is safe
+    """
+    if value is None:
+        return False
+    # Reject control characters, backticks, dollar signs, backslashes
+    if _DANGEROUS_ENV_CHARS.search(value):
+        return False
+    # Reasonable length limit
+    if len(value) > 32768:  # 32KB max
+        return False
+    return True
+
+
+def validate_docker_network_name(name: str) -> bool:
+    """
+    Validate Docker network name is safe.
+
+    Docker network names must be 1-63 characters, start with alphanumeric,
+    and contain only alphanumeric, dash, underscore, or period.
+
+    Args:
+        name: Network name to validate
+
+    Returns:
+        True if network name is valid
+    """
+    if not name or len(name) > 63:
+        return False
+    # Must start with alphanumeric
+    if not name[0].isalnum():
+        return False
+    # Only allowed characters
+    for char in name:
+        if not (char.isalnum() or char in '-_.'):
+            return False
+    return True
+
+
+def validate_hostname(hostname: str) -> bool:
+    """
+    Validate hostname for allowed_hosts list.
+
+    Args:
+        hostname: Hostname to validate
+
+    Returns:
+        True if hostname is valid
+    """
+    if not hostname or len(hostname) > 253:
+        return False
+
+    # Split by dots
+    labels = hostname.split('.')
+    if not labels or len(labels) < 1:
+        return False
+
+    for label in labels:
+        if not label or len(label) > 63:
+            return False
+        # Each label must be alphanumeric or hyphen
+        # Cannot start or end with hyphen
+        if label.startswith('-') or label.endswith('-'):
+            return False
+        for char in label:
+            if not (char.isalnum() or char == '-'):
+                return False
+
+    return True
+
+
+def sanitize_allowed_hosts(hosts: List[str]) -> List[str]:
+    """
+    Sanitize and validate a list of allowed hosts.
+
+    Args:
+        hosts: List of hostnames to validate
+
+    Returns:
+        List of valid hostnames (invalid ones are filtered out)
+    """
+    valid_hosts = []
+    for host in hosts:
+        host = host.strip().lower()
+        if validate_hostname(host):
+            valid_hosts.append(host)
+    return valid_hosts
+
+
+# Pattern for valid Docker image names
+# Format: [registry/]name[:tag][@sha256:digest]
+# Registry: hostname[:port]/
+# Name: alphanumeric, dash, underscore, period, forward slash
+# Tag: alphanumeric, dash, underscore, period
+_DOCKER_IMAGE_PATTERN = re.compile(
+    r'^'
+    r'(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*(?::\d+)?)/)?'  # Optional registry
+    r'(?P<name>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9]|[a-zA-Z0-9])'  # Image name
+    r'(?::(?P<tag>[a-zA-Z0-9][-a-zA-Z0-9._]{0,127}))?'  # Optional tag
+    r'(?:@sha256:(?P<digest>[a-f0-9]{64}))?'  # Optional digest
+    r'$'
+)
+
+
+def validate_docker_image(image: str) -> bool:
+    """
+    Validate Docker image name is safe.
+
+    Validates format to prevent injection attacks in Dockerfile FROM statements.
+
+    Args:
+        image: Docker image name (e.g., 'python:3.11-slim', 'myregistry.io/app:v1')
+
+    Returns:
+        True if image name is valid and safe
+    """
+    if not image or len(image) > 256:
+        return False
+
+    # Reject dangerous patterns that could be used for injection
+    dangerous_patterns = [
+        '\n', '\r',  # Newlines could inject additional Dockerfile commands
+        '`', '$', '\\',  # Shell injection
+        '#',  # Comments
+        ';', '&&', '||',  # Command chaining
+    ]
+    for pattern in dangerous_patterns:
+        if pattern in image:
+            return False
+
+    return bool(_DOCKER_IMAGE_PATTERN.match(image))
+
+
+# Pattern for valid Python versions
+_PYTHON_VERSION_PATTERN = re.compile(r'^3\.(?:[89]|1[0-9])$')
+
+
+def validate_python_version(version: str) -> bool:
+    """
+    Validate Python version string.
+
+    Accepts versions like '3.8', '3.9', '3.10', '3.11', '3.12', etc.
+
+    Args:
+        version: Python version string
+
+    Returns:
+        True if version is valid
+    """
+    if not version or len(version) > 10:
+        return False
+    return bool(_PYTHON_VERSION_PATTERN.match(version))
+
+
+# Pattern for pip package specifier (simplified PEP 508)
+# Allows: package-name, package_name, package[extra], package>=1.0, etc.
+_PIP_PACKAGE_PATTERN = re.compile(
+    r'^[a-zA-Z0-9][-a-zA-Z0-9._]*'  # Package name
+    r'(?:\[[a-zA-Z0-9][-a-zA-Z0-9,._]*\])?'  # Optional extras
+    r'(?:[<>=!~]+[a-zA-Z0-9.*+!-]+(?:,[<>=!~]+[a-zA-Z0-9.*+!-]+)*)?'  # Optional version
+    r'$'
+)
+
+
+def validate_pip_requirement(requirement: str) -> bool:
+    """
+    Validate pip requirement string is safe.
+
+    Validates against simplified PEP 508 to prevent injection.
+
+    Args:
+        requirement: Pip requirement (e.g., 'numpy', 'pandas>=1.0', 'flask[async]')
+
+    Returns:
+        True if requirement is valid and safe
+    """
+    if not requirement or len(requirement) > 256:
+        return False
+
+    # Reject dangerous patterns
+    dangerous_patterns = [
+        '\n', '\r',  # Newlines
+        '`', '$', '\\',  # Shell injection
+        '#',  # Comments
+        ';', '&&', '||',  # Command chaining
+        '/',  # Path separators (could be URLs or local paths)
+        '@',  # URL specifiers
+    ]
+    for pattern in dangerous_patterns:
+        if pattern in requirement:
+            return False
+
+    return bool(_PIP_PACKAGE_PATTERN.match(requirement))

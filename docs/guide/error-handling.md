@@ -23,7 +23,7 @@ For async jobs, the `ExecutionRecord` includes structured error information:
 ```json
 {
   "execution_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "error",
+  "status": "failed",
   "error": {
     "type": "division_error",
     "message": "Division by zero"

@@ -1,16 +1,117 @@
 # Python SDK Reference
 
-The Tako VM Python SDK provides a typed interface for code execution.
+The Tako VM Python SDK provides two ways to execute code:
+
+1. **Sandbox (Library Mode)** - Direct execution without a server
+2. **TakoVM Client (Server Mode)** - HTTP client for the Tako VM server
 
 ## Installation
 
-The SDK is included with Tako VM:
-
-```python
-import tako_vm
+```bash
+pip install tako-vm
 ```
 
-## Quick Start
+---
+
+## Sandbox (Library Mode)
+
+The `Sandbox` class provides direct code execution without running a server. This is the recommended approach for development and simple use cases.
+
+### Quick Start
+
+```python
+from tako_vm import Sandbox
+
+with Sandbox() as sb:
+    result = sb.run("print(1 + 1)")
+    print(result.stdout)  # "2"
+```
+
+### With Dependencies
+
+```python
+from tako_vm import Sandbox
+
+with Sandbox() as sb:
+    result = sb.run("""
+import pandas as pd
+print(pd.__version__)
+""", requirements=["pandas"])
+    print(result.stdout)
+```
+
+### With Local Packages
+
+```python
+from tako_vm import Sandbox
+
+# Mount local packages into the sandbox
+sb = Sandbox(package_dirs=["./my_utils"])
+result = sb.run("from my_utils import helper; helper.process()")
+```
+
+### Sandbox Class
+
+```python
+from tako_vm import Sandbox
+
+sandbox = Sandbox(
+    image="code-executor:latest",  # Docker image
+    timeout=30,                     # Default timeout
+    memory_limit="512m",            # Memory limit
+    cpu_limit=1.0,                  # CPU limit
+    network_enabled=False,          # Allow network access
+    package_dirs=[],                # Local packages to mount
+    auto_build=True,                # Auto-build image if missing
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `image` | str | `"code-executor:latest"` | Docker image to use |
+| `timeout` | int | 30 | Default timeout in seconds |
+| `memory_limit` | str | `"512m"` | Container memory limit |
+| `cpu_limit` | float | 1.0 | CPU limit |
+| `network_enabled` | bool | False | Allow network access |
+| `package_dirs` | list | `[]` | Local directories to mount as Python packages |
+| `auto_build` | bool | True | Build image automatically if missing |
+
+### sandbox.run()
+
+Execute code in the sandbox.
+
+```python
+result = sandbox.run(
+    code,                    # Python code to execute
+    input_data=None,         # Dict available at /input/data.json
+    timeout=None,            # Override default timeout
+    requirements=None,       # Packages to install (e.g., ["pandas"])
+)
+```
+
+**Returns**: `SandboxResult`
+
+### SandboxResult
+
+```python
+@dataclass
+class SandboxResult:
+    stdout: str              # Standard output
+    stderr: str              # Standard error
+    exit_code: int           # Exit code (0 = success)
+    success: bool            # Whether execution succeeded
+    output: Optional[dict]   # Parsed /output/result.json
+    error: Optional[str]     # Error message if failed
+    duration_ms: Optional[int]  # Execution time in ms
+```
+
+---
+
+## TakoVM Client (Server Mode)
+
+For production deployments with job queuing, persistence, and audit trails, use the HTTP server and client.
+
+### Quick Start
 
 ```python
 from dataclasses import dataclass

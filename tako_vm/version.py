@@ -10,7 +10,7 @@ import json
 import subprocess
 import logging
 from typing import Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .models import JobVersion
 from .job_types import JobType
@@ -96,7 +96,7 @@ class VersionManager:
             job_type_name=job_type.name,
             version_tag=version_tag,
             digest=digest,
-            built_at=datetime.utcnow(),
+            built_at=datetime.now(timezone.utc),
             built_by=built_by,
             dockerfile_hash=dockerfile_hash,
             requirements_hash=self.compute_requirements_hash(job_type),

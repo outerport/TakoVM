@@ -2,54 +2,188 @@
 Core data models for Tako VM production runtime.
 
 This module defines the audit-grade ExecutionRecord and related models
-used throughout the system.
+used throughout the system. Designed for SVG/artifact-based workflows.
 """
 
 import hashlib
+import json
 import uuid
-from datetime import datetime
-from typing import List, Literal, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def sha256_json(obj: object) -> str:
+    """
+    Compute SHA256 hash of canonical JSON representation.
+
+    Uses sorted keys and minimal separators for deterministic hashing
+    regardless of dict ordering in caller code.
+
+    Args:
+        obj: JSON-serializable object
+
+    Returns:
+        Hex-encoded SHA256 hash
+    """
+    canonical = json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def sha256_content(content: str) -> str:
+    """Compute SHA256 hash of string content."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 class ResourceUsage(BaseModel):
     """Resource consumption metrics from container execution."""
 
-    max_rss_mb: Optional[float] = None
+    model_config = {"extra": "forbid"}
+
+    max_rss_mb: Optional[float] = Field(default=None, ge=0, le=1048576)  # Max 1TB
     """Peak resident set size in megabytes."""
 
-    cpu_time_ms: Optional[int] = None
+    cpu_time_ms: Optional[int] = Field(default=None, ge=0, le=86400000)  # Max 24h
     """Total CPU time (user + system) in milliseconds."""
 
-    wall_time_ms: int = 0
+    wall_time_ms: Optional[int] = Field(default=None, ge=0, le=86400000)  # Max 24h
     """Wall clock duration in milliseconds."""
+
+
+class InputArtifact(BaseModel):
+    """Input artifact metadata for file-based inputs (e.g., SVG source files)."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(..., min_length=1, max_length=255)
+    """Filename, e.g., 'input.svg'."""
+
+    size_bytes: int = Field(..., ge=0, le=1073741824)  # Max 1GB
+    """File size in bytes."""
+
+    sha256: str = Field(..., min_length=64, max_length=64, pattern=r'^[a-f0-9]{64}$')
+    """SHA256 hash of file contents (hex-encoded)."""
+
+    content_type: Optional[str] = Field(default=None, max_length=255)
+    """MIME type, e.g., 'image/svg+xml'."""
+
+    storage_key: str = Field(..., min_length=1, max_length=1024)
+    """Storage location key, e.g., 'runs/<id>/inputs/input.svg'."""
+
+    @field_validator('name')
+    @classmethod
+    def validate_filename(cls, v: str) -> str:
+        """Validate filename is safe (no path traversal)."""
+        if '/' in v or '\\' in v:
+            raise ValueError("Filename cannot contain path separators")
+        if v in ('..', '.'):
+            raise ValueError("Invalid filename")
+        return v
 
 
 class Artifact(BaseModel):
     """Output artifact metadata."""
 
-    name: str
-    """Filename, e.g., 'result.json'."""
+    model_config = {"extra": "forbid"}
 
-    size_bytes: int
+    name: str = Field(..., min_length=1, max_length=255)
+    """Filename, e.g., 'output.png'."""
+
+    size_bytes: int = Field(..., ge=0, le=1073741824)  # Max 1GB
     """File size in bytes."""
 
-    sha256: str
-    """SHA256 hash of file contents."""
+    sha256: str = Field(..., min_length=64, max_length=64, pattern=r'^[a-f0-9]{64}$')
+    """SHA256 hash of file contents (hex-encoded)."""
 
-    path: str
-    """Container path, e.g., '/output/result.json'."""
+    content_type: Optional[str] = Field(default=None, max_length=255)
+    """MIME type, e.g., 'image/png', 'application/pdf', 'image/svg+xml'."""
+
+    storage_key: str = Field(..., min_length=1, max_length=1024)
+    """Storage location key, e.g., 'runs/<id>/artifacts/output.png'."""
+
+    @field_validator('name')
+    @classmethod
+    def validate_filename(cls, v: str) -> str:
+        """Validate filename is safe (no path traversal)."""
+        if '/' in v or '\\' in v:
+            raise ValueError("Filename cannot contain path separators")
+        if v in ('..', '.'):
+            raise ValueError("Invalid filename")
+        return v
+
+
+# Canonical error type values (from security.classify_error)
+ErrorType = Literal[
+    # Signal-based errors
+    "timeout",           # Execution exceeded time limit
+    "oom",               # Out of memory (SIGKILL/137)
+    "cancelled",         # Cancelled by user (SIGTERM/143)
+    "segfault",          # Segmentation fault (SIGSEGV/139)
+    "abort",             # Process aborted (SIGABRT/134)
+    "arithmetic_error",  # Floating point exception (SIGFPE/136)
+    "bus_error",         # Bus error (SIGBUS/135)
+    "pipe_error",        # Broken pipe (SIGPIPE/141)
+    "killed",            # Process killed by system
+    # Permission errors
+    "permission",        # Permission denied
+    # Python errors
+    "syntax_error",      # SyntaxError, IndentationError
+    "import_error",      # ImportError, ModuleNotFoundError
+    "type_error",        # TypeError
+    "value_error",       # ValueError
+    "key_error",         # KeyError
+    "index_error",       # IndexError
+    "attribute_error",   # AttributeError
+    "name_error",        # NameError (undefined variable)
+    "file_not_found",    # FileNotFoundError
+    "file_error",        # IsADirectoryError, NotADirectoryError
+    "os_error",          # OSError, IOError
+    "recursion_error",   # RecursionError
+    "assertion_error",   # AssertionError
+    "division_error",    # ZeroDivisionError
+    "overflow_error",    # OverflowError
+    "encoding_error",    # UnicodeError
+    "json_error",        # JSONDecodeError
+    # Dependency errors
+    "dependency_error",  # Package installation failure (uv/pip)
+    # Network errors
+    "network_error",     # ConnectionError
+    "network_timeout",   # Network request timed out
+    # System errors
+    "docker_error",      # Docker image/command not found
+    "service_unavailable",  # Circuit breaker open
+    "config_error",      # Configuration error
+    "internal_error",    # Internal Tako VM error
+    "runtime_error",     # Generic runtime error
+    "unknown",           # Unknown error type
+]
 
 
 class ExecutionError(BaseModel):
     """Sanitized error information."""
 
-    type: str
-    """Error type, e.g., 'timeout', 'oom', 'runtime_error'."""
+    model_config = {"extra": "forbid"}
 
-    message: str
+    type: ErrorType
+    """Error type classification."""
+
+    message: str = Field(..., min_length=1, max_length=4096)
     """Sanitized error message (no sensitive paths)."""
+
+
+# Canonical job status values
+JobStatus = Literal[
+    "queued",     # Submitted, waiting in queue
+    "running",    # Currently executing
+    "succeeded",  # Completed successfully
+    "failed",     # Failed with error
+    "timeout",    # Exceeded time limit
+    "oom",        # Out of memory
+    "cancelled",  # Cancelled by user/system
+]
 
 
 class ExecutionRecord(BaseModel):
@@ -58,46 +192,94 @@ class ExecutionRecord(BaseModel):
 
     This is the primary record returned from all executions, containing
     complete audit trail information for compliance and debugging.
+    Designed for artifact-based workflows (SVG rendering, etc.).
     """
 
+    model_config = {"extra": "forbid"}
+
     # Identity
-    execution_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    execution_id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=64)
     """Unique identifier for this execution."""
 
     # Status
-    status: Literal["pending", "running", "success", "error", "timeout", "oom", "cancelled"] = "pending"
+    status: JobStatus = "queued"
     """Current execution status."""
 
     # Job reference
-    job_type: str = "default"
-    """Job type name, e.g., 'data-processing'."""
+    job_type: str = Field(default="default", min_length=1, max_length=64)
+    """Job type name, e.g., 'svg-processing'."""
 
-    job_version: str = "latest"
-    """Job type version, e.g., 'sha256:a1b2c3d4' or 'v1.0.0'."""
+    job_ref: str = Field(default="default@latest", min_length=1, max_length=128)
+    """Full job reference, e.g., 'svg-processing@sha256:a1b2c3d4'."""
 
     # Timing
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    """When the job was submitted."""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    """When the job was created/submitted."""
+
+    queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    """When the job entered the queue."""
+
+    dequeued_at: Optional[datetime] = None
+    """When the job was picked up by a worker."""
 
     started_at: Optional[datetime] = None
-    """When execution began."""
+    """When execution began (container started)."""
 
     ended_at: Optional[datetime] = None
     """When execution completed."""
 
-    duration_ms: Optional[int] = None
+    duration_ms: Optional[int] = Field(default=None, ge=0, le=86400000)  # Max 24h
     """Total execution duration in milliseconds."""
 
-    # Input fingerprints (not raw data for security)
-    code_hash: str = ""
-    """SHA256 hash of submitted code."""
+    # Retry/attempt tracking
+    attempt: int = Field(default=0, ge=0, le=100)
+    """Current attempt number (0-indexed)."""
 
-    input_hash: str = ""
-    """SHA256 hash of input_data JSON."""
+    max_attempts: int = Field(default=1, ge=1, le=100)
+    """Maximum retry attempts."""
+
+    # Worker tracking
+    worker_id: Optional[str] = Field(default=None, max_length=64)
+    """ID of worker that executed this job."""
+
+    # Idempotency
+    idempotency_key: Optional[str] = Field(default=None, max_length=128)
+    """Client-provided key to prevent duplicate executions."""
+
+    idempotency_fingerprint: Optional[str] = Field(default=None, max_length=64)
+    """SHA256 fingerprint of request params (for idempotency collision detection)."""
+
+    # Input fingerprints (not raw data for security)
+    code_hash: str = Field(default="", max_length=64)
+    """SHA256 hash of submitted code (hex-encoded, or empty)."""
+
+    input_hash: str = Field(default="", max_length=64)
+    """SHA256 hash of canonical input_data JSON (hex-encoded, or empty)."""
+
+    params_hash: str = Field(default="", max_length=64)
+    """SHA256 hash of canonical execution params JSON (hex-encoded, or empty)."""
+
+    input_artifacts_hash: str = Field(default="", max_length=64)
+    """SHA256 hash of canonical input artifacts manifest (hex-encoded, or empty)."""
+
+    @field_validator('code_hash', 'input_hash', 'params_hash', 'input_artifacts_hash', 'idempotency_fingerprint', mode='after')
+    @classmethod
+    def validate_hash_field(cls, v: Optional[str]) -> Optional[str]:
+        """Validate hash fields are either empty/None or valid SHA256 hex strings."""
+        import re
+        if v is None or v == "":
+            return v
+        if len(v) != 64 or not re.match(r'^[a-f0-9]{64}$', v):
+            raise ValueError("Hash must be empty or 64-character lowercase hex string")
+        return v
+
+    # Input artifacts (for file-based inputs like SVG)
+    input_artifacts: List[InputArtifact] = Field(default_factory=list)
+    """List of input artifacts with metadata."""
 
     # Results
-    exit_code: Optional[int] = None
-    """Container exit code."""
+    exit_code: Optional[int] = Field(default=None, ge=-1, le=255)
+    """Container exit code (-1 for internal errors, 0-255 for normal)."""
 
     stdout: str = ""
     """Captured stdout (bounded to max_stdout_bytes)."""
@@ -105,14 +287,20 @@ class ExecutionRecord(BaseModel):
     stderr: str = ""
     """Captured stderr (bounded to max_stderr_bytes)."""
 
-    output: Optional[dict] = None
-    """Parsed output from /output/result.json."""
+    stdout_truncated: bool = False
+    """Whether stdout was truncated due to size limit."""
+
+    stderr_truncated: bool = False
+    """Whether stderr was truncated due to size limit."""
+
+    result_json: Optional[Dict[str, Any]] = None
+    """Parsed JSON result from /output/result.json (if present)."""
 
     # Resources
     resource_usage: Optional[ResourceUsage] = None
     """Resource consumption metrics."""
 
-    # Artifacts
+    # Output artifacts
     artifacts: List[Artifact] = Field(default_factory=list)
     """List of output artifacts with metadata."""
 
@@ -121,21 +309,21 @@ class ExecutionRecord(BaseModel):
     """Sanitized error information if failed."""
 
     # Audit
-    client_ip: Optional[str] = None
+    client_ip: Optional[str] = Field(default=None, max_length=45)  # IPv6 max length
     """Client IP address."""
 
-    @field_validator('stdout', 'stderr', mode='before')
-    @classmethod
-    def truncate_output(cls, v: str) -> str:
-        """Ensure outputs don't exceed reasonable size in model."""
-        if v and len(v) > 65536:
-            return v[:65536]
-        return v or ""
+    # Lineage tracking
+    parent_execution_id: Optional[str] = Field(default=None, max_length=64)
+    """ID of parent execution (for reruns/forks)."""
 
-    @staticmethod
-    def hash_content(content: str) -> str:
-        """Compute SHA256 hash of content."""
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    relationship: Optional[Literal["rerun", "fork"]] = None
+    """Relationship to parent execution."""
+
+    @field_validator("stdout", "stderr", mode="before")
+    @classmethod
+    def ensure_string(cls, v: str) -> str:
+        """Ensure outputs are strings (truncation handled by capture layer)."""
+        return v or ""
 
     def to_summary(self) -> dict:
         """Return a summary suitable for list endpoints."""
@@ -143,44 +331,69 @@ class ExecutionRecord(BaseModel):
             "execution_id": self.execution_id,
             "status": self.status,
             "job_type": self.job_type,
-            "created_at": self.created_at.isoformat(),
+            "job_ref": self.job_ref,
+            "created_at": self.created_at.isoformat(),  # pylint: disable=no-member
             "duration_ms": self.duration_ms,
             "exit_code": self.exit_code,
+            "attempt": self.attempt,
         }
+
+    def compute_input_artifacts_hash(self) -> str:
+        """Compute canonical hash of input artifacts manifest."""
+        if not self.input_artifacts:
+            return ""
+        manifest = [
+            {"name": a.name, "sha256": a.sha256, "size_bytes": a.size_bytes}
+            for a in sorted(self.input_artifacts, key=lambda x: x.name)
+        ]
+        return sha256_json(manifest)
 
 
 class JobVersion(BaseModel):
     """Immutable job type version record."""
 
-    job_type_name: str
+    model_config = {"extra": "forbid"}
+
+    job_type_name: str = Field(..., min_length=1, max_length=64)
     """Name of the job type."""
 
-    version_tag: Optional[str] = None
+    version_tag: Optional[str] = Field(default=None, max_length=64)
     """Semantic version tag, e.g., 'v1.0.0'."""
 
-    digest: str
-    """SHA256 digest of job type configuration."""
+    digest: str = Field(..., min_length=64, max_length=64, pattern=r'^[a-f0-9]{64}$')
+    """SHA256 digest of job type configuration (full hex string)."""
 
     # Build metadata
-    built_at: datetime = Field(default_factory=datetime.utcnow)
+    built_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     """When this version was built."""
 
-    built_by: Optional[str] = None
+    built_by: Optional[str] = Field(default=None, max_length=128)
     """API key or 'manual' that triggered the build."""
 
-    dockerfile_hash: str = ""
-    """SHA256 of generated Dockerfile."""
+    dockerfile_hash: str = Field(default="", max_length=64)
+    """SHA256 of generated Dockerfile (hex-encoded, or empty)."""
 
-    requirements_hash: str = ""
-    """SHA256 of requirements list."""
+    requirements_hash: str = Field(default="", max_length=64)
+    """SHA256 of requirements list (hex-encoded, or empty)."""
 
     # Docker image reference
-    image_ref: str = ""
-    """Full image reference, e.g., 'tako-vm-data-processing@sha256:...'."""
+    image_ref: str = Field(default="", max_length=256)
+    """Full image reference, e.g., 'tako-vm-svg-processing@sha256:...'."""
+
+    @field_validator('dockerfile_hash', 'requirements_hash', mode='after')
+    @classmethod
+    def validate_hash_field(cls, v: str) -> str:
+        """Validate hash fields are either empty or valid SHA256 hex strings."""
+        import re
+        if v == "":
+            return v
+        if len(v) != 64 or not re.match(r'^[a-f0-9]{64}$', v):
+            raise ValueError("Hash must be empty or 64-character lowercase hex string")
+        return v
 
     @property
     def full_ref(self) -> str:
-        """Return job_type@digest format."""
+        """Return job_type@sha256:digest format."""
         return f"{self.job_type_name}@sha256:{self.digest[:12]}"
 
     @property
@@ -192,29 +405,31 @@ class JobVersion(BaseModel):
 class DeadLetterEntry(BaseModel):
     """Entry in the dead letter queue for failed jobs."""
 
-    id: Optional[int] = None
+    model_config = {"extra": "forbid"}
+
+    id: Optional[int] = Field(default=None, ge=0)
     """Database ID (set by storage)."""
 
-    job_id: str
+    job_id: str = Field(..., min_length=1, max_length=64)
     """Original job ID."""
 
-    job_data: dict
+    job_data: Dict[str, Any]
     """Original job data (code, input_data, etc.)."""
 
-    error_type: str
+    error_type: ErrorType
     """Type of error that caused failure."""
 
-    error_message: Optional[str] = None
+    error_message: Optional[str] = Field(default=None, max_length=4096)
     """Error message."""
 
-    retry_count: int = 0
+    retry_count: int = Field(default=0, ge=0, le=100)
     """Number of retry attempts made."""
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     """When the entry was added to DLQ."""
 
-    client_ip: Optional[str] = None
+    client_ip: Optional[str] = Field(default=None, max_length=45)  # IPv6 max length
     """Original client IP."""
 
-    correlation_id: Optional[str] = None
+    correlation_id: Optional[str] = Field(default=None, max_length=64)
     """Correlation ID for tracing."""

@@ -114,10 +114,14 @@ def run_server(args):
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Use CLI args if provided, otherwise fall back to config values
+    host = args.host if args.host != "0.0.0.0" else config.server_host
+    port = args.port if args.port != 8000 else config.server_port
+
     uvicorn.run(
         app,
-        host=args.host,
-        port=args.port,
+        host=host,
+        port=port,
         reload=args.reload,
     )
 
@@ -182,7 +186,8 @@ def validate_config(args):
             if config.job_types:
                 for jt in config.job_types:
                     print(f"    - {jt.name}")
-        except Exception:
+        except (ImportError, ValueError, AttributeError) as e:
+            # Silently skip summary if config can't be loaded for display
             pass
 
 

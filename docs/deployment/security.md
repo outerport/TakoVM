@@ -199,6 +199,50 @@ subprocess.run(..., timeout=timeout)
 | Single artifact | 10MB | `max_artifact_bytes` |
 | Total artifacts | 50MB | `max_total_artifacts_bytes` |
 
+### Dockerfile Build Validation
+
+When building job type containers, Tako VM validates all inputs to prevent injection attacks:
+
+| Validation | Function | Description |
+|------------|----------|-------------|
+| Docker image | `validate_docker_image()` | Rejects shell injection, newlines, special characters |
+| Python version | `validate_python_version()` | Only allows `3.8`, `3.9`, `3.10`, `3.11`, `3.12`, etc. |
+| Pip packages | `validate_pip_requirement()` | Rejects URLs, path specifiers, shell characters |
+| Environment keys | `validate_env_key()` | POSIX-compliant variable names only |
+| Environment values | `validate_env_value()` | Rejects control characters, backticks, `$` |
+| Shared code paths | Path validation | Prevents directory traversal |
+
+**Example attack prevention:**
+
+```python
+# These malicious inputs are rejected:
+
+# Docker image injection
+base_image = "python:3.11\nRUN rm -rf /"  # ❌ Rejected
+
+# Python version injection
+python_version = "3.11; apt install malware"  # ❌ Rejected
+
+# Pip package injection
+requirements = ["numpy; rm -rf /"]  # ❌ Rejected
+
+# Environment variable injection
+environment = {"PATH": "$HOME/malware"}  # ❌ Rejected
+```
+
+### Artifact Filename Validation
+
+Output artifacts are validated before collection:
+
+```python
+# is_safe_filename() rejects:
+- Path separators (/, \)
+- Parent directory references (..)
+- Hidden files (.filename)
+```
+
+This prevents containers from creating artifacts that could overwrite or read unauthorized files.
+
 ## Error Sanitization
 
 Stack traces are sanitized to prevent information leakage:

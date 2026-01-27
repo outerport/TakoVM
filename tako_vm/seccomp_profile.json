@@ -108,6 +108,15 @@
       "action": "SCMP_ACT_ALLOW"
     },
     {
+      "comment": "Allow Unix socket operations (needed by uv/tokio for signal handling)",
+      "names": [
+        "socket", "socketpair", "connect", "bind", "listen", "accept", "accept4",
+        "sendto", "recvfrom", "sendmsg", "recvmsg", "shutdown", "getsockname",
+        "getpeername", "setsockopt", "getsockopt", "sendmmsg", "recvmmsg"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
       "comment": "Allow process creation (for subprocess)",
       "names": [
         "clone", "clone3", "fork", "vfork", "execve", "execveat",
@@ -189,6 +198,14 @@
       "comment": "Allow capget/capset (read only)",
       "names": [
         "capget"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Allow user/group switching (for gosu privilege dropping)",
+      "names": [
+        "setuid", "setgid", "setgroups", "setresuid", "setresgid",
+        "capset"
       ],
       "action": "SCMP_ACT_ALLOW"
     },

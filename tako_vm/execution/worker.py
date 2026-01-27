@@ -13,13 +13,19 @@ import hashlib
 from pathlib import Path
 import time
 import logging
-from typing import Optional, List
-from datetime import datetime
+from typing import Any, Dict, Optional, List
+from datetime import datetime, timezone
 
 from tako_vm.job_types import JobType, JobTypeRegistry
-from tako_vm.models import ExecutionRecord, ResourceUsage, Artifact, ExecutionError
+from tako_vm.models import (
+    ExecutionRecord, ResourceUsage, Artifact, InputArtifact, ExecutionError,
+    sha256_json, sha256_content
+)
 from tako_vm.security import (
-    cap_output, sanitize_error, classify_error, compute_file_hash
+    cap_output, sanitize_error, classify_error, compute_file_hash,
+    validate_env_key, validate_env_value, validate_docker_network_name,
+    sanitize_allowed_hosts, is_safe_filename, validate_pip_requirement,
+    validate_docker_image
 )
 from tako_vm.config import get_config, TakoVMConfig
 from tako_vm.execution.health import get_circuit_breaker
@@ -31,6 +37,12 @@ logger = logging.getLogger(__name__)
 # When running the server in a container with Docker socket mounted, this must
 # be a path that exists on the host and is mounted into the server container.
 WORKSPACE_DIR = os.environ.get("TAKO_VM_WORKSPACE", tempfile.gettempdir())
+
+# Maximum number of runtime requirements to prevent env var overflow and slow startups
+MAX_REQUIREMENTS = 50
+
+# Docker volume name for uv cache (speeds up repeated dependency installs)
+UV_CACHE_VOLUME = "tako-uv-cache"
 
 
 # Default job type for backward compatibility
@@ -67,30 +79,6 @@ class CodeExecutor:
         self.registry = registry or JobTypeRegistry()
         self.config = config or get_config()
 
-    def _auto_build_image(self, job_type: JobType) -> bool:
-        """
-        Automatically build a container image for a job type.
-
-        Args:
-            job_type: Job type configuration
-
-        Returns:
-            True if build succeeded, False otherwise
-        """
-        # In production mode, don't auto-build
-        if self.config.production_mode:
-            logger.warning(f"Production mode: auto-build disabled for {job_type.name}")
-            return False
-
-        try:
-            from tako_vm.execution.builder import ContainerBuilder
-            builder = ContainerBuilder()
-            builder.build(job_type, quiet=True)
-            return True
-        except Exception as e:
-            logger.error(f"Auto-build failed for {job_type.name}: {e}")
-            return False
-
     def _get_job_type(self, job_type_name: Optional[str]) -> JobType:
         """
         Get job type configuration.
@@ -118,7 +106,7 @@ class CodeExecutor:
 
         return job_type
 
-    def execute_job(self, job: dict) -> dict:
+    def execute_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute a job in an isolated container (legacy interface).
 
@@ -178,7 +166,8 @@ class CodeExecutor:
                 input_dir=input_dir,
                 output_dir=output_dir,
                 timeout=timeout,
-                job_type=job_type
+                job_type=job_type,
+                extra_requirements=job.get("requirements"),
             )
 
             # Add job type info to result
@@ -197,13 +186,20 @@ class CodeExecutor:
             return result
 
         finally:
-            # Cleanup
-            shutil.rmtree(workspace, ignore_errors=True)
+            # Cleanup workspace with error logging
+            try:
+                shutil.rmtree(workspace)
+            except Exception as cleanup_err:
+                logger.error(
+                    "Failed to cleanup workspace %s: %s. "
+                    "Manual cleanup may be required.",
+                    workspace, cleanup_err
+                )
 
     def execute_job_with_record(
         self,
         job_id: str,
-        job: dict,
+        job: Dict[str, Any],
         client_ip: Optional[str] = None
     ) -> ExecutionRecord:
         """
@@ -223,16 +219,27 @@ class CodeExecutor:
         code = job.get("code", "")
         input_data = job.get("input_data", {})
 
+        job_type_name = job.get("job_type") or "default"
         record = ExecutionRecord(
             execution_id=job_id,
-            status="pending",
-            job_type=job.get("job_type") or "default",
-            job_version="latest",  # Will be updated if version manager is used
-            created_at=datetime.utcnow(),
-            code_hash=hashlib.sha256(code.encode()).hexdigest(),
-            input_hash=hashlib.sha256(json.dumps(input_data, sort_keys=True).encode()).hexdigest(),
+            status="queued",
+            job_type=job_type_name,
+            job_ref=f"{job_type_name}@latest",
+            created_at=datetime.now(timezone.utc),
+            queued_at=datetime.now(timezone.utc),
+            code_hash=sha256_content(code),
+            input_hash=sha256_json(input_data),
             client_ip=client_ip,
+            # Propagate idempotency and lineage fields from job data
+            idempotency_key=job.get("idempotency_key"),
+            idempotency_fingerprint=job.get("idempotency_fingerprint"),
+            parent_execution_id=job.get("parent_execution_id"),
+            relationship=job.get("relationship"),
         )
+
+        # Store code and input as internal artifacts for replay support
+        replay_artifacts = self._store_replay_artifacts(job_id, code, input_data)
+        record.input_artifacts.extend(replay_artifacts)
 
         # Get job type configuration
         try:
@@ -240,8 +247,8 @@ class CodeExecutor:
             record.job_type = job_type.name
         except ValueError as e:
             # Job type not found in production mode
-            record.status = "error"
-            record.ended_at = datetime.utcnow()
+            record.status = "failed"
+            record.ended_at = datetime.now(timezone.utc)
             record.error = ExecutionError(type="config_error", message=str(e))
             return record
 
@@ -273,12 +280,15 @@ class CodeExecutor:
 
             # Mark as running
             record.status = "running"
-            record.started_at = datetime.utcnow()
+            record.started_at = datetime.now(timezone.utc)
 
             # Execute in container with retry for transient failures
             start_time = time.time()
             timed_out = False
-            retry_ctx = RetryContext(RetryConfig(max_attempts=2, base_delay=1.0))
+            retry_ctx = RetryContext(RetryConfig(
+                max_attempts=self.config.max_retry_attempts,
+                base_delay=self.config.retry_base_delay
+            ))
 
             while retry_ctx.should_retry():
                 try:
@@ -287,7 +297,8 @@ class CodeExecutor:
                         input_dir=input_dir,
                         output_dir=output_dir,
                         timeout=timeout,
-                        job_type=job_type
+                        job_type=job_type,
+                        extra_requirements=job.get("requirements"),
                     )
 
                     # Check for transient Docker errors in result
@@ -326,7 +337,7 @@ class CodeExecutor:
             wall_time_ms = int((end_time - start_time) * 1000)
 
             # Update record with results
-            record.ended_at = datetime.utcnow()
+            record.ended_at = datetime.now(timezone.utc)
             record.duration_ms = wall_time_ms
             record.exit_code = result.get("exit_code")
 
@@ -344,13 +355,13 @@ class CodeExecutor:
             record.resource_usage = ResourceUsage(wall_time_ms=wall_time_ms)
 
             # Collect artifacts from output directory
-            record.artifacts = self._collect_artifacts(output_dir)
+            record.artifacts = self._collect_artifacts(output_dir, job_id)
 
-            # Read main output
+            # Read main JSON result (if present)
             output_file = output_dir / "result.json"
             if output_file.exists():
                 try:
-                    record.output = json.loads(output_file.read_text())
+                    record.result_json = json.loads(output_file.read_text(encoding="utf-8"))
                 except json.JSONDecodeError:
                     pass
 
@@ -368,9 +379,9 @@ class CodeExecutor:
                     message="Execution exceeded memory limit"
                 )
             elif result.get("success"):
-                record.status = "success"
+                record.status = "succeeded"
             else:
-                record.status = "error"
+                record.status = "failed"
                 error_type, error_msg = classify_error(
                     result.get("exit_code", 1),
                     result.get("stderr", ""),
@@ -382,8 +393,8 @@ class CodeExecutor:
 
         except Exception as e:
             # Unexpected error
-            record.status = "error"
-            record.ended_at = datetime.utcnow()
+            record.status = "failed"
+            record.ended_at = datetime.now(timezone.utc)
             record.error = ExecutionError(
                 type="internal_error",
                 message=sanitize_error(str(e))
@@ -391,15 +402,23 @@ class CodeExecutor:
             return record
 
         finally:
-            # Cleanup
-            shutil.rmtree(workspace, ignore_errors=True)
+            # Cleanup workspace with error logging
+            try:
+                shutil.rmtree(workspace)
+            except Exception as cleanup_err:
+                logger.error(
+                    "Failed to cleanup workspace %s: %s. "
+                    "Manual cleanup may be required.",
+                    workspace, cleanup_err
+                )
 
-    def _collect_artifacts(self, output_dir: Path) -> List[Artifact]:
+    def _collect_artifacts(self, output_dir: Path, job_id: str) -> List[Artifact]:
         """
         Collect artifacts from output directory.
 
         Args:
             output_dir: Path to output directory
+            job_id: Job ID for storage key generation
 
         Returns:
             List of Artifact objects
@@ -414,11 +433,16 @@ class CodeExecutor:
             if not path.is_file():
                 continue
 
+            # Validate filename is safe (no path traversal, no hidden files)
+            if not is_safe_filename(path.name):
+                logger.warning("Artifact %s has unsafe filename, skipping", path.name)
+                continue
+
             size = path.stat().st_size
 
             # Check individual file size limit
             if size > self.config.max_artifact_bytes:
-                logger.warning(f"Artifact {path.name} exceeds size limit, skipping")
+                logger.warning("Artifact %s exceeds size limit, skipping", path.name)
                 continue
 
             # Check total size limit
@@ -432,13 +456,73 @@ class CodeExecutor:
                     name=path.name,
                     size_bytes=size,
                     sha256=file_hash,
-                    path=f"/output/{path.name}"
+                    storage_key=f"runs/{job_id}/artifacts/{path.name}"
                 ))
                 total_size += size
             except Exception as e:
-                logger.warning(f"Failed to process artifact {path.name}: {e}")
+                logger.warning("Failed to process artifact %s: %s", path.name, e)
 
         return artifacts
+
+    def _store_replay_artifacts(
+        self,
+        execution_id: str,
+        code: str,
+        input_data: dict
+    ) -> List[InputArtifact]:
+        """
+        Store code and input_data as internal artifacts for replay support.
+
+        These internal artifacts (prefixed with _) enable the rerun/fork
+        functionality by preserving the exact code and inputs used.
+
+        Args:
+            execution_id: Unique execution identifier
+            code: Python code that was executed
+            input_data: Input data dictionary
+
+        Returns:
+            List of InputArtifact objects for the stored files
+        """
+        replay_artifacts = []
+        runs_dir = self.config.data_dir / "runs" / execution_id
+
+        try:
+            # Ensure directory exists
+            runs_dir.mkdir(parents=True, exist_ok=True)
+
+            # Store code as _code.py
+            code_bytes = code.encode("utf-8")
+            code_path = runs_dir / "_code.py"
+            code_path.write_text(code, encoding="utf-8")
+            replay_artifacts.append(InputArtifact(
+                name="_code.py",
+                size_bytes=len(code_bytes),
+                sha256=sha256_content(code),
+                content_type="text/x-python",
+                storage_key=f"runs/{execution_id}/_code.py",
+            ))
+
+            # Store input_data as _input.json (canonical form)
+            input_json = json.dumps(input_data, sort_keys=True, separators=(",", ":"))
+            input_bytes = input_json.encode("utf-8")
+            input_path = runs_dir / "_input.json"
+            input_path.write_text(input_json, encoding="utf-8")
+            replay_artifacts.append(InputArtifact(
+                name="_input.json",
+                size_bytes=len(input_bytes),
+                sha256=sha256_json(input_data),
+                content_type="application/json",
+                storage_key=f"runs/{execution_id}/_input.json",
+            ))
+
+            logger.debug("Stored replay artifacts for execution %s", execution_id)
+
+        except Exception as e:
+            logger.warning("Failed to store replay artifacts for %s: %s", execution_id, e)
+            # Don't fail the execution if replay artifact storage fails
+
+        return replay_artifacts
 
     def _run_container(
         self,
@@ -446,8 +530,9 @@ class CodeExecutor:
         input_dir: Path,
         output_dir: Path,
         timeout: int,
-        job_type: JobType
-    ) -> dict:
+        job_type: JobType,
+        extra_requirements: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
         Run Docker container with security restrictions.
 
@@ -457,6 +542,7 @@ class CodeExecutor:
             output_dir: Path to directory for output (will be mounted read-write)
             timeout: Timeout in seconds
             job_type: Job type configuration for container settings
+            extra_requirements: Additional requirements to install (merged with job_type)
 
         Returns:
             Dictionary with execution results
@@ -473,69 +559,105 @@ class CodeExecutor:
             }
 
         # Determine which image to use
-        image_name = job_type.image_name if job_type.name != "default" else self.docker_image
-
-        # Check if job type image exists
-        try:
-            check = subprocess.run(
-                ["docker", "image", "inspect", image_name],
-                capture_output=True,
-                check=False
-            )
-            if check.returncode != 0:
-                # Image doesn't exist - try to auto-build it
-                if job_type.name != "default":
-                    logger.info(f"Image {image_name} not found, attempting auto-build...")
-                    if self._auto_build_image(job_type):
-                        logger.info(f"Successfully built {image_name}")
-                    else:
-                        if self.config.production_mode:
-                            raise ValueError(f"Image {image_name} not found (production mode)")
-                        logger.warning(f"Failed to build {image_name}, using default")
-                        image_name = self.docker_image
-                else:
-                    image_name = self.docker_image
-        except subprocess.SubprocessError:
-            if self.config.production_mode:
-                raise
+        # Use custom base_image if specified, otherwise use default executor
+        # Dependencies are installed at runtime via TAKO_REQUIREMENTS env var
+        if job_type.base_image:
+            if not validate_docker_image(job_type.base_image):
+                return {
+                    "success": False,
+                    "error": "Invalid base_image configuration",
+                    "stdout": "",
+                    "stderr": f"base_image '{job_type.base_image}' failed validation",
+                    "exit_code": -1
+                }
+            image_name = job_type.base_image
+        else:
             image_name = self.docker_image
+
+        # Merge job_type requirements with extra_requirements
+        all_requirements = list(job_type.requirements) if job_type.requirements else []
+        if extra_requirements:
+            all_requirements.extend(extra_requirements)
+
+        # Check if runtime deps require network access
+        has_runtime_deps = bool(all_requirements)
+        needs_network_for_deps = has_runtime_deps and not job_type.network_enabled
+
+        if needs_network_for_deps:
+            logger.warning(
+                f"Job type '{job_type.name}' has requirements but network_enabled=false. "
+                "Using bridge network for dependency installation. "
+                "For true network isolation, use pre-built images via 'tako-vm build'."
+            )
 
         cmd = [
             "docker", "run",
             "--rm",
             "--read-only",
             "--cap-drop=ALL",
+            "--cap-add=SETUID",  # Required for gosu to switch user
+            "--cap-add=SETGID",  # Required for gosu to switch user
             "--security-opt=no-new-privileges",
         ]
+
+        # Mount uv cache volume for faster repeated installs
+        if has_runtime_deps:
+            cmd.append(f"--mount=type=volume,source={UV_CACHE_VOLUME},target=/root/.cache/uv")
 
         # Network isolation (default: no network for security)
         if job_type.network_enabled:
             if job_type.allowed_hosts:
                 # Allowlist configured - check if proxy network exists
+                proxy_network = self.config.proxy_network_name
+                proxy_port = self.config.proxy_port
+
+                # Validate proxy network name to prevent injection
+                if not validate_docker_network_name(proxy_network):
+                    logger.error(f"Invalid proxy network name: {proxy_network}")
+                    return {
+                        "success": False,
+                        "error": "Invalid proxy network configuration",
+                        "stdout": "",
+                        "stderr": "Proxy network name contains invalid characters",
+                        "exit_code": -1
+                    }
+
                 proxy_check = subprocess.run(
-                    ["docker", "network", "inspect", "tako-proxy"],
+                    ["docker", "network", "inspect", proxy_network],
                     capture_output=True,
                     check=False
                 )
                 if proxy_check.returncode == 0:
                     # Proxy network exists - use it for enforcement
-                    cmd.append("--network=tako-proxy")
-                    allowed_hosts_str = ",".join(job_type.allowed_hosts)
-                    cmd.append(f"--env=TAKO_ALLOWED_HOSTS={allowed_hosts_str}")
-                    cmd.append("--env=HTTP_PROXY=http://tako-proxy:3128")
-                    cmd.append("--env=HTTPS_PROXY=http://tako-proxy:3128")
+                    cmd.append(f"--network={proxy_network}")
+
+                    # Sanitize allowed hosts to prevent injection
+                    safe_hosts = sanitize_allowed_hosts(job_type.allowed_hosts)
+                    if safe_hosts:
+                        allowed_hosts_str = ",".join(safe_hosts)
+                        cmd.append(f"--env=TAKO_ALLOWED_HOSTS={allowed_hosts_str}")
+                    else:
+                        logger.warning(
+                            f"Job type '{job_type.name}' has allowed_hosts but none are valid"
+                        )
+
+                    cmd.append(f"--env=HTTP_PROXY=http://{proxy_network}:{proxy_port}")
+                    cmd.append(f"--env=HTTPS_PROXY=http://{proxy_network}:{proxy_port}")
                     cmd.append("--env=NO_PROXY=localhost,127.0.0.1")
                 else:
                     # Proxy not configured - warn and use bridge (no enforcement)
                     logger.warning(
                         f"Job type '{job_type.name}' has allowed_hosts configured but "
-                        "tako-proxy network not found. Network access is UNRESTRICTED. "
+                        f"{proxy_network} network not found. Network access is UNRESTRICTED. "
                         "Set up egress proxy for enforcement: scripts/proxy/docker-compose.yaml"
                     )
                     cmd.append("--network=bridge")
             else:
                 # No allowlist - unrestricted network access
                 cmd.append("--network=bridge")
+        elif needs_network_for_deps:
+            # Runtime deps need network access even if job wants isolation
+            cmd.append("--network=bridge")
         else:
             cmd.append("--network=none")  # Complete network isolation
 
@@ -561,7 +683,8 @@ class CodeExecutor:
             f"--mount=type=bind,source={code_dir.absolute()},target=/code,readonly",
             f"--mount=type=bind,source={input_dir.absolute()},target=/input,readonly",
             f"--mount=type=bind,source={output_dir.absolute()},target=/output",
-            f"--tmpfs=/tmp:rw,noexec,nosuid,size={limits.tmpfs_size}",
+            # Use larger /tmp and allow exec when installing packages (packages go to /tmp/site-packages)
+            f"--tmpfs=/tmp:rw,{'exec' if has_runtime_deps else 'noexec'},nosuid,size={'300m' if has_runtime_deps else limits.tmpfs_size}",
         ])
 
         # Add seccomp profile if enabled and exists
@@ -569,9 +692,41 @@ class CodeExecutor:
             if self.config.seccomp_profile_path.exists():
                 cmd.append(f"--security-opt=seccomp={self.config.seccomp_profile_path}")
 
-        # Add environment variables from job type
+        # Add environment variables from job type (with validation)
         for key, value in job_type.environment.items():
+            if not validate_env_key(key):
+                logger.warning(f"Skipping invalid environment variable key: {key}")
+                continue
+            if not validate_env_value(value):
+                logger.warning(f"Skipping environment variable with unsafe value: {key}")
+                continue
             cmd.append(f"--env={key}={value}")
+
+        # Pass requirements for runtime installation via uv
+        if all_requirements:
+            # Check requirements limit to prevent env var overflow
+            if len(all_requirements) > MAX_REQUIREMENTS:
+                logger.error(
+                    f"Job has {len(all_requirements)} requirements "
+                    f"(max {MAX_REQUIREMENTS}). Use pre-built images for large dependency sets."
+                )
+                return {
+                    "success": False,
+                    "error": f"Too many requirements ({len(all_requirements)} > {MAX_REQUIREMENTS})",
+                    "stdout": "",
+                    "stderr": "Use pre-built images for jobs with many dependencies",
+                    "exit_code": -1
+                }
+
+            validated_reqs = []
+            for req in all_requirements:
+                if validate_pip_requirement(req):
+                    validated_reqs.append(req)
+                else:
+                    logger.warning(f"Skipping invalid pip requirement: {req}")
+            if validated_reqs:
+                reqs_str = ",".join(validated_reqs)
+                cmd.append(f"--env=TAKO_REQUIREMENTS={reqs_str}")
 
         # Add image name
         cmd.append(image_name)
@@ -620,9 +775,10 @@ class CodeExecutor:
             error_msg = str(e).lower()
             if "docker" in error_msg or "daemon" in error_msg or "connection" in error_msg:
                 circuit_breaker.record_failure(str(e))
+            # Sanitize error message before returning to prevent info leakage
             return {
                 "success": False,
-                "error": str(e),
+                "error": sanitize_error(str(e)),
                 "stdout": "",
                 "stderr": "",
                 "exit_code": -1

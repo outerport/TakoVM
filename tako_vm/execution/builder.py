@@ -23,6 +23,10 @@ from pathlib import Path
 from typing import Optional
 
 from tako_vm.job_types import JobType, JobTypeRegistry
+from tako_vm.security import (
+    validate_env_key, validate_env_value,
+    validate_docker_image, validate_python_version, validate_pip_requirement
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,28 +58,68 @@ class ContainerBuilder:
 
         Returns:
             Dockerfile content as string
-        """
-        base_image = job_type.base_image or f"python:{job_type.python_version}-slim"
 
-        # Build requirements install command
+        Raises:
+            BuildError: If job type has invalid configuration
+        """
+        # Validate python_version before using in base image
+        if not validate_python_version(job_type.python_version):
+            raise BuildError(
+                f"Invalid python_version '{job_type.python_version}' for job type {job_type.name}"
+            )
+
+        # Determine and validate base image
+        if job_type.base_image:
+            if not validate_docker_image(job_type.base_image):
+                raise BuildError(
+                    f"Invalid base_image '{job_type.base_image}' for job type {job_type.name}"
+                )
+            base_image = job_type.base_image
+        else:
+            base_image = f"python:{job_type.python_version}-slim"
+
+        # Build requirements install command with validation
         requirements_cmd = ""
         if job_type.requirements:
-            req_list = " ".join(f'"{r}"' for r in job_type.requirements)
-            requirements_cmd = f"RUN pip install --no-cache-dir {req_list}"
+            validated_reqs = []
+            for req in job_type.requirements:
+                if not validate_pip_requirement(req):
+                    logger.warning(
+                        "Skipping invalid pip requirement in Dockerfile for %s: %s",
+                        job_type.name, req
+                    )
+                    continue
+                validated_reqs.append(req)
 
-        # Build environment variables
+            if validated_reqs:
+                req_list = " ".join(f'"{r}"' for r in validated_reqs)
+                requirements_cmd = f"RUN uv pip install --system --no-cache {req_list}"
+
+        # Build environment variables (with validation and escaping)
         env_lines = ""
         if job_type.environment:
             for key, value in job_type.environment.items():
-                env_lines += f'ENV {key}="{value}"\n'
+                # Validate key and value to prevent injection
+                if not validate_env_key(key):
+                    logger.warning("Skipping invalid env key in Dockerfile: %s", key)
+                    continue
+                if not validate_env_value(value):
+                    logger.warning("Skipping env with unsafe value in Dockerfile: %s", key)
+                    continue
+                # Escape quotes and backslashes in value for Dockerfile
+                escaped_value = value.replace('\\', '\\\\').replace('"', '\\"')
+                env_lines += f'ENV {key}="{escaped_value}"\n'
 
         dockerfile = f'''# Auto-generated Dockerfile for job type: {job_type.name}
 FROM {base_image}
 
+# Install uv for fast dependency installation
+COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /usr/local/bin/uv
+
 # Install custom libraries if present
 COPY ./custom_libs /tmp/custom_libs
 RUN if [ -n "$(ls -A /tmp/custom_libs/*.whl 2>/dev/null)" ]; then \\
-        pip install --no-cache-dir /tmp/custom_libs/*.whl; \\
+        uv pip install --system --no-cache /tmp/custom_libs/*.whl; \\
     fi && \\
     rm -rf /tmp/custom_libs
 
@@ -147,11 +191,22 @@ CMD ["python", "-u", "/code/main.py"]
                     if item.is_file():
                         shutil.copy2(item, custom_libs_dest)
 
-            # Copy shared code
+            # Copy shared code with path validation
             shared_code_dest = build_path / "shared_code"
             shared_code_dest.mkdir()
+            # Get current working directory as the allowed base for shared_code
+            allowed_base = Path.cwd().resolve()
             for code_path in job_type.shared_code:
-                src = Path(code_path)
+                src = Path(code_path).resolve()
+                # Security: Ensure shared_code paths don't escape the allowed directory
+                try:
+                    src.relative_to(allowed_base)
+                except ValueError:
+                    logger.warning(
+                        "Skipping shared_code path that escapes allowed directory: %s",
+                        code_path
+                    )
+                    continue
                 if src.exists():
                     if src.is_file():
                         shutil.copy2(src, shared_code_dest)

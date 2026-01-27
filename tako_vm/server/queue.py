@@ -7,12 +7,12 @@ Provides async job submission, execution, and cancellation.
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional, Dict, TYPE_CHECKING
+from datetime import datetime, timezone
+from typing import Any, Optional, Dict, TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 
-from tako_vm.models import ExecutionRecord, ExecutionError, DeadLetterEntry
+from tako_vm.models import ExecutionRecord, ExecutionError, DeadLetterEntry, sha256_content, sha256_json
 from tako_vm.storage import ExecutionStorage
 from tako_vm.server.correlation import set_correlation_id, get_correlation_id
 
@@ -29,13 +29,13 @@ class QueuedJob:
     job_id: str
     """Unique job identifier."""
 
-    job_data: dict
+    job_data: Dict[str, Any]
     """Job data including code, input_data, etc."""
 
     client_ip: Optional[str]
     """Client IP address."""
 
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     """When the job was queued."""
 
     future: Optional[asyncio.Future] = field(default=None)
@@ -58,7 +58,8 @@ class WorkerPool:
         executor: 'CodeExecutor',
         storage: ExecutionStorage,
         max_workers: int = 4,
-        max_queue_size: int = 100
+        max_queue_size: int = 100,
+        queue_wait_timeout: float = 1.0
     ):
         """
         Initialize worker pool.
@@ -68,16 +69,19 @@ class WorkerPool:
             storage: ExecutionStorage for persisting records
             max_workers: Maximum concurrent workers
             max_queue_size: Maximum pending jobs in queue
+            queue_wait_timeout: Timeout for queue wait operations in seconds
         """
         self.executor = executor
         self.storage = storage
         self.max_workers = max_workers
         self.max_queue_size = max_queue_size
+        self.queue_wait_timeout = queue_wait_timeout
 
         self._queue: asyncio.Queue[QueuedJob] = asyncio.Queue(maxsize=max_queue_size)
         self._workers: list[asyncio.Task] = []
         self._active_jobs: Dict[str, QueuedJob] = {}
         self._running_jobs: Dict[str, QueuedJob] = {}
+        self._jobs_lock: asyncio.Lock = asyncio.Lock()  # Protect job dictionary access
         self._thread_pool: Optional[ThreadPoolExecutor] = None
         self._shutdown = False
         self._started = False
@@ -133,9 +137,9 @@ class WorkerPool:
             for task in pending:
                 task.cancel()
 
-        # Shutdown thread pool
+        # Shutdown thread pool - wait for running jobs to complete
         if self._thread_pool:
-            self._thread_pool.shutdown(wait=False)
+            self._thread_pool.shutdown(wait=True, cancel_futures=True)
             self._thread_pool = None
 
         self._workers.clear()
@@ -147,7 +151,7 @@ class WorkerPool:
 
     async def submit(
         self,
-        job_data: dict,
+        job_data: Dict[str, Any],
         client_ip: Optional[str] = None
     ) -> str:
         """
@@ -164,6 +168,7 @@ class WorkerPool:
             RuntimeError: If queue is full
         """
         job_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
 
         # Create future in async context where event loop is running
         loop = asyncio.get_running_loop()
@@ -180,7 +185,29 @@ class WorkerPool:
         except asyncio.QueueFull as exc:
             raise RuntimeError("Job queue is full, try again later") from exc
 
-        self._active_jobs[job_id] = job
+        async with self._jobs_lock:
+            self._active_jobs[job_id] = job
+
+        # Create preliminary "queued" record for idempotency tracking
+        # This ensures concurrent requests with same idempotency_key see the record
+        job_type_name = job_data.get("job_type") or "default"
+        queued_record = ExecutionRecord(
+            execution_id=job_id,
+            status="queued",
+            job_type=job_type_name,
+            job_ref=f"{job_type_name}@latest",
+            created_at=now,
+            queued_at=now,
+            code_hash=sha256_content(job_data.get("code", "")),
+            input_hash=sha256_json(job_data.get("input_data", {})),
+            client_ip=client_ip,
+            idempotency_key=job_data.get("idempotency_key"),
+            idempotency_fingerprint=job_data.get("idempotency_fingerprint"),
+            parent_execution_id=job_data.get("parent_execution_id"),
+            relationship=job_data.get("relationship"),
+        )
+        self.storage.save_record(queued_record)
+
         logger.info(f"Job {job_id} queued (queue size: {self._queue.qsize()})")
 
         return job_id
@@ -205,7 +232,10 @@ class WorkerPool:
             asyncio.TimeoutError: If timeout exceeded
             asyncio.CancelledError: If job was cancelled
         """
-        job = self._active_jobs.get(job_id) or self._running_jobs.get(job_id)
+        # Get job reference with lock protection
+        async with self._jobs_lock:
+            job = self._active_jobs.get(job_id) or self._running_jobs.get(job_id)
+
         if not job:
             # Check if already completed in storage
             record = self.storage.get_record(job_id)
@@ -221,7 +251,7 @@ class WorkerPool:
         else:
             return await job.future
 
-    def get_job_status(self, job_id: str) -> Optional[dict]:
+    async def get_job_status(self, job_id: str) -> Optional[dict]:
         """
         Get current job status.
 
@@ -231,30 +261,32 @@ class WorkerPool:
         Returns:
             Status dict or None if not found
         """
-        # Check active/running jobs
-        if job_id in self._running_jobs:
-            return {
-                'job_id': job_id,
-                'status': 'running',
-                'created_at': self._running_jobs[job_id].created_at.isoformat(),
-            }
-
-        if job_id in self._active_jobs:
-            job = self._active_jobs[job_id]
-            if job.future and job.future.done():
+        # Check active/running jobs with lock protection
+        async with self._jobs_lock:
+            if job_id in self._running_jobs:
                 return {
                     'job_id': job_id,
-                    'status': 'completed',
-                    'created_at': job.created_at.isoformat(),
+                    'status': 'running',
+                    'created_at': self._running_jobs[job_id].created_at.isoformat(),
                 }
-            return {
-                'job_id': job_id,
-                'status': 'pending',
-                'created_at': job.created_at.isoformat(),
-                'queue_position': self._estimate_queue_position(job_id),
-            }
 
-        # Check storage for completed jobs
+            if job_id in self._active_jobs:
+                job = self._active_jobs[job_id]
+                if job.future and job.future.done():
+                    return {
+                        'job_id': job_id,
+                        'status': 'completed',
+                        'created_at': job.created_at.isoformat(),
+                    }
+                queue_position = self._estimate_queue_position_unlocked(job_id)
+                return {
+                    'job_id': job_id,
+                    'status': 'pending',
+                    'created_at': job.created_at.isoformat(),
+                    'queue_position': queue_position,
+                }
+
+        # Check storage for completed jobs (outside lock - storage has its own lock)
         record = self.storage.get_record(job_id)
         if record:
             return {
@@ -276,26 +308,27 @@ class WorkerPool:
         Returns:
             True if job was found and cancelled
         """
-        # Check pending jobs
-        job = self._active_jobs.get(job_id)
-        if job and job.future and not job.future.done():
-            job.cancelled = True
-            job.future.cancel()
-            logger.info(f"Job {job_id} cancelled (was pending)")
-            return True
+        async with self._jobs_lock:
+            # Check pending jobs
+            job = self._active_jobs.get(job_id)
+            if job and job.future and not job.future.done():
+                job.cancelled = True
+                job.future.cancel()
+                logger.info(f"Job {job_id} cancelled (was pending)")
+                return True
 
-        # Check running jobs - can't cancel Docker execution directly
-        # but we can mark it for cleanup
-        job = self._running_jobs.get(job_id)
-        if job:
-            job.cancelled = True
-            logger.info(f"Job {job_id} marked for cancellation (was running)")
-            return True
+            # Check running jobs - can't cancel Docker execution directly
+            # but we can mark it for cleanup
+            job = self._running_jobs.get(job_id)
+            if job:
+                job.cancelled = True
+                logger.info(f"Job {job_id} marked for cancellation (was running)")
+                return True
 
         return False
 
-    def _estimate_queue_position(self, job_id: str) -> int:
-        """Estimate position in queue (rough estimate)."""
+    def _estimate_queue_position_unlocked(self, job_id: str) -> int:
+        """Estimate position in queue (rough estimate). Must be called with _jobs_lock held."""
         position = 1
         for jid in self._active_jobs:
             if jid == job_id:
@@ -304,9 +337,34 @@ class WorkerPool:
                 position += 1
         return position
 
+    async def get_stats(self) -> dict:
+        """Get current pool statistics."""
+        async with self._jobs_lock:
+            running_count = len(self._running_jobs)
+        return {
+            'pending': self._queue.qsize(),
+            'running': running_count,
+            'max_workers': self.max_workers,
+            'max_queue_size': self.max_queue_size,
+        }
+
     @property
     def stats(self) -> dict:
-        """Get current pool statistics."""
+        """Get current pool statistics (sync version for backward compatibility).
+
+        DEPRECATED: This property doesn't use lock protection for running count,
+        which can cause race conditions. Use get_stats() for async code paths.
+
+        Returns:
+            Dict with pending, running, max_workers, max_queue_size
+        """
+        import warnings
+        warnings.warn(
+            "WorkerPool.stats property is deprecated due to race condition. "
+            "Use 'await worker_pool.get_stats()' instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         return {
             'pending': self._queue.qsize(),
             'running': len(self._running_jobs),
@@ -324,23 +382,27 @@ class WorkerPool:
         logger.info(f"Worker {worker_id} started")
 
         while not self._shutdown:
+            # Initialize job to None for safe error recovery
+            job: Optional[QueuedJob] = None
             try:
                 # Wait for job with timeout so we can check shutdown flag
                 try:
                     job = await asyncio.wait_for(
                         self._queue.get(),
-                        timeout=1.0
+                        timeout=self.queue_wait_timeout
                     )
                 except asyncio.TimeoutError:
                     continue
 
                 # Skip if already cancelled
                 if job.cancelled or (job.future and job.future.cancelled()):
-                    self._active_jobs.pop(job.job_id, None)
+                    async with self._jobs_lock:
+                        self._active_jobs.pop(job.job_id, None)
                     continue
 
                 # Move to running
-                self._running_jobs[job.job_id] = job
+                async with self._jobs_lock:
+                    self._running_jobs[job.job_id] = job
 
                 # Set correlation ID from job data for logging
                 correlation_id = job.job_data.get("correlation_id")
@@ -356,44 +418,68 @@ class WorkerPool:
                     # Save to storage
                     self.storage.save_record(record)
 
-                    # Set result
-                    if job.future and not job.future.done():
-                        job.future.set_result(record)
+                    # Set result (with race condition protection)
+                    if job.future:
+                        try:
+                            job.future.set_result(record)
+                        except asyncio.InvalidStateError:
+                            logger.debug(f"Future already done for job {job.job_id}")
 
                 except asyncio.CancelledError:
                     # Job was cancelled
+                    job_type_name = job.job_data.get("job_type") or "default"
                     record = ExecutionRecord(
                         execution_id=job.job_id,
                         status="cancelled",
-                        job_type=job.job_data.get("job_type") or "default",
-                        code_hash=ExecutionRecord.hash_content(job.job_data.get("code", "")),
-                        input_hash=ExecutionRecord.hash_content(str(job.job_data.get("input_data", {}))),
+                        job_type=job_type_name,
+                        job_ref=f"{job_type_name}@latest",
+                        created_at=job.created_at,
+                        queued_at=job.created_at,
+                        code_hash=sha256_content(job.job_data.get("code", "")),
+                        input_hash=sha256_json(job.job_data.get("input_data", {})),
                         client_ip=job.client_ip,
+                        # Propagate idempotency and lineage fields
+                        idempotency_key=job.job_data.get("idempotency_key"),
+                        idempotency_fingerprint=job.job_data.get("idempotency_fingerprint"),
+                        parent_execution_id=job.job_data.get("parent_execution_id"),
+                        relationship=job.job_data.get("relationship"),
                     )
                     self.storage.save_record(record)
 
-                    if job.future and not job.future.done():
-                        job.future.set_result(record)
+                    if job.future:
+                        try:
+                            job.future.set_result(record)
+                        except asyncio.InvalidStateError:
+                            logger.debug(f"Future already done for cancelled job {job.job_id}")
 
                 except Exception as e:
-                    logger.error(f"Worker {worker_id} error on job {job.job_id}: {e}")
+                    logger.error(f"Worker {worker_id} error on job {job.job_id}: {e}", exc_info=True)
 
                     # Always create an ExecutionRecord for audit trail (P0 fix)
                     from tako_vm.security import sanitize_error
                     error_type = "internal_error"
                     error_msg = sanitize_error(str(e))
+                    job_type_name = job.job_data.get("job_type") or "default"
 
                     record = ExecutionRecord(
                         execution_id=job.job_id,
-                        status="error",
-                        job_type=job.job_data.get("job_type") or "default",
-                        code_hash=ExecutionRecord.hash_content(job.job_data.get("code", "")),
-                        input_hash=ExecutionRecord.hash_content(str(job.job_data.get("input_data", {}))),
+                        status="failed",
+                        job_type=job_type_name,
+                        job_ref=f"{job_type_name}@latest",
+                        created_at=job.created_at,
+                        queued_at=job.created_at,
+                        code_hash=sha256_content(job.job_data.get("code", "")),
+                        input_hash=sha256_json(job.job_data.get("input_data", {})),
                         client_ip=job.client_ip,
                         error=ExecutionError(
                             type=error_type,
                             message=error_msg
                         ),
+                        # Propagate idempotency and lineage fields
+                        idempotency_key=job.job_data.get("idempotency_key"),
+                        idempotency_fingerprint=job.job_data.get("idempotency_fingerprint"),
+                        parent_execution_id=job.job_data.get("parent_execution_id"),
+                        relationship=job.job_data.get("relationship"),
                     )
                     self.storage.save_record(record)
 
@@ -413,37 +499,79 @@ class WorkerPool:
                     except Exception as dlq_err:
                         logger.warning(f"Failed to add job {job.job_id} to DLQ: {dlq_err}")
 
-                    if job.future and not job.future.done():
-                        job.future.set_result(record)
+                    if job.future:
+                        try:
+                            job.future.set_result(record)
+                        except asyncio.InvalidStateError:
+                            logger.debug(f"Future already done for failed job {job.job_id}")
 
                 finally:
-                    # Cleanup
-                    self._active_jobs.pop(job.job_id, None)
-                    self._running_jobs.pop(job.job_id, None)
+                    # Cleanup with lock protection
+                    async with self._jobs_lock:
+                        self._active_jobs.pop(job.job_id, None)
+                        self._running_jobs.pop(job.job_id, None)
 
             except Exception as e:
-                logger.error(f"Worker {worker_id} unexpected error: {e}")
+                logger.error(f"Worker {worker_id} unexpected error: {e}", exc_info=True)
+                # Ensure job future is resolved even on unexpected errors
+                # to prevent clients from hanging indefinitely
+                if job is not None and job.future:
+                    try:
+                        from tako_vm.security import sanitize_error
+                        error_record = ExecutionRecord(
+                            execution_id=job.job_id,
+                            status="failed",
+                            job_type=job.job_data.get("job_type") or "default",
+                            job_ref=f"{job.job_data.get('job_type') or 'default'}@latest",
+                            created_at=job.created_at,
+                            queued_at=job.created_at,
+                            code_hash=sha256_content(job.job_data.get("code", "")),
+                            input_hash=sha256_json(job.job_data.get("input_data", {})),
+                            client_ip=job.client_ip,
+                            error=ExecutionError(
+                                type="internal_error",
+                                message=sanitize_error(str(e))
+                            ),
+                        )
+                        self.storage.save_record(error_record)
+                        job.future.set_result(error_record)
+                    except Exception as recovery_err:
+                        logger.error(f"Failed to recover from error for job {job.job_id}: {recovery_err}")
+                        try:
+                            job.future.cancel()
+                        except Exception:
+                            pass
                 await asyncio.sleep(1)  # Prevent tight loop on errors
 
         logger.info(f"Worker {worker_id} stopped")
 
     async def _execute_job(self, job: QueuedJob) -> ExecutionRecord:
         """
-        Execute job in thread pool.
+        Execute job in thread pool with timeout protection.
 
         Args:
             job: Job to execute
 
         Returns:
             ExecutionRecord with results
-        """
-        loop = asyncio.get_event_loop()
 
-        # Run synchronous execution in thread pool
-        record = await loop.run_in_executor(
-            self._thread_pool,
-            self._run_job_sync,
-            job
+        Raises:
+            asyncio.TimeoutError: If execution exceeds timeout + buffer
+        """
+        loop = asyncio.get_running_loop()
+
+        # Get job timeout with buffer for Docker startup overhead
+        job_timeout = job.job_data.get("timeout", 30)
+        executor_timeout = job_timeout + 60  # 60s buffer for container setup
+
+        # Run synchronous execution in thread pool with timeout protection
+        record = await asyncio.wait_for(
+            loop.run_in_executor(
+                self._thread_pool,
+                self._run_job_sync,
+                job
+            ),
+            timeout=executor_timeout
         )
 
         return record

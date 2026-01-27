@@ -9,7 +9,9 @@
       "environment": {},
       "memory_limit": "512m",
       "cpu_limit": 1.0,
-      "timeout": 30
+      "timeout": 30,
+      "network_enabled": false,
+      "allowed_hosts": []
     },
     {
       "name": "data-processing",
@@ -23,7 +25,9 @@
       "environment": {},
       "memory_limit": "1g",
       "cpu_limit": 2.0,
-      "timeout": 60
+      "timeout": 60,
+      "network_enabled": false,
+      "allowed_hosts": []
     },
     {
       "name": "ml-inference",
@@ -37,7 +41,25 @@
       "environment": {},
       "memory_limit": "2g",
       "cpu_limit": 2.0,
-      "timeout": 120
+      "timeout": 120,
+      "network_enabled": false,
+      "allowed_hosts": []
+    },
+    {
+      "name": "test-with-secrets",
+      "requirements": [],
+      "python_version": "3.11",
+      "base_image": null,
+      "shared_code": [],
+      "environment": {
+        "API_KEY": "sk-secret-api-key-12345",
+        "DATABASE_URL": "postgresql://user:password@db.internal:5432/app"
+      },
+      "memory_limit": "256m",
+      "cpu_limit": 0.5,
+      "timeout": 10,
+      "network_enabled": false,
+      "allowed_hosts": []
     }
   ]
 }

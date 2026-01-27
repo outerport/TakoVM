@@ -191,7 +191,13 @@ class RetryContext:
 
     Useful when you need more control than the decorator provides.
 
+    IMPORTANT: This class uses blocking time.sleep() for delays.
+    It should only be used in synchronous code or within a ThreadPoolExecutor.
+    Do NOT use this directly in async coroutines - the sleep will block
+    the entire event loop.
+
     Example:
+        # In synchronous code or thread pool:
         retry_ctx = RetryContext(RetryConfig(max_attempts=3))
         while retry_ctx.should_retry():
             try:

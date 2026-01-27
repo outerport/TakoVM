@@ -25,6 +25,13 @@ production_mode: false
 max_workers: 4
 
 # ==============================================================================
+# SERVER & LOGGING
+# ==============================================================================
+log_level: INFO            # DEBUG, INFO, WARNING, ERROR, CRITICAL
+server_host: "0.0.0.0"     # Host to bind to
+server_port: 8000          # Port to bind to
+
+# ==============================================================================
 # EXECUTION LIMITS
 # ==============================================================================
 default_timeout: 30       # seconds
@@ -34,6 +41,19 @@ max_code_bytes: 102400    # 100KB
 max_input_bytes: 1048576  # 1MB
 max_stdout_bytes: 65536   # 64KB
 max_stderr_bytes: 65536   # 64KB
+
+# ==============================================================================
+# RETRY CONFIGURATION
+# ==============================================================================
+max_retry_attempts: 2     # Retries for transient failures
+retry_base_delay: 1.0     # Base delay between retries (seconds)
+queue_wait_timeout: 1.0   # Queue wait timeout (seconds)
+
+# ==============================================================================
+# PROXY CONFIGURATION (for network-enabled jobs)
+# ==============================================================================
+proxy_network_name: tako-proxy  # Docker network name
+proxy_port: 3128               # Proxy port
 
 # ==============================================================================
 # CONTAINER SECURITY
@@ -95,13 +115,32 @@ Tako VM searches for configuration in this order:
 
 ## Environment Variables
 
+Tako VM supports the following environment variables for configuration:
+
 ```bash
 # Override config file location
 export TAKO_VM_CONFIG=/path/to/config.yaml
 
 # Override data directory
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
+
+# Override database file path
+export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/executions.db
+
+# Override workspace directory for job file storage
+export TAKO_VM_WORKSPACE=/var/tmp/tako_vm
+
+# XDG Base Directory support
+export XDG_DATA_HOME=/custom/data/path  # Tako VM will use $XDG_DATA_HOME/tako_vm
 ```
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TAKO_VM_CONFIG` | Config file path | Search in standard locations |
+| `TAKO_VM_DATA_DIR` | Data directory | `~/.tako_vm` or `$XDG_DATA_HOME/tako_vm` |
+| `TAKO_VM_DATABASE_FILE` | SQLite database path | `$DATA_DIR/executions.db` |
+| `TAKO_VM_WORKSPACE` | Job workspace directory | System temp directory |
+| `XDG_DATA_HOME` | XDG base data directory | `~/.local/share` |
 
 ## Job Types
 
@@ -162,11 +201,16 @@ print(f"Job types: {len(config.job_types)}")
 
 ```yaml
 production_mode: true     # require pre-built images
+log_level: WARNING        # reduce log verbosity
 max_workers: 8
 max_timeout: 60
 default_timeout: 15
 enable_seccomp: true
 enable_userns: true
+
+# Retry configuration for production
+max_retry_attempts: 3
+retry_base_delay: 2.0
 
 container_limits:
   pids_limit: 50
@@ -174,3 +218,16 @@ container_limits:
   nofile_hard: 128
   tmpfs_size: "64m"
 ```
+
+## New Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `log_level` | Logging level | `INFO` |
+| `server_host` | Server bind host | `0.0.0.0` |
+| `server_port` | Server bind port | `8000` |
+| `proxy_network_name` | Docker network for proxy | `tako-proxy` |
+| `proxy_port` | Proxy port number | `3128` |
+| `max_retry_attempts` | Max retries for transient failures | `2` |
+| `retry_base_delay` | Base delay between retries (seconds) | `1.0` |
+| `queue_wait_timeout` | Queue wait timeout (seconds) | `1.0` |

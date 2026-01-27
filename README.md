@@ -1,6 +1,77 @@
-# Tako VM - Secure Code Executor
+# Tako VM
 
-A production-ready, secure Python code execution system that runs untrusted code in isolated Docker containers.
+Job queue infrastructure for Python AI agents. Self-hosted. Free.
+
+Stop rebuilding Redis + Bull + Postgres for async job processing.
+Tako VM handles job queues, retries, and execution history out of the box.
+
+```python
+pip install tako-vm
+
+from tako_vm import Sandbox
+
+with Sandbox() as sb:
+    result = sb.run("print(1 + 1)")
+    print(result.stdout)  # "2"
+```
+
+## Why Tako VM?
+
+- **Job queue + workers** - Async execution with worker pool, no Redis/Celery setup needed
+- **Docker isolation** - Each job runs in its own container, can't affect other jobs or your system
+- **Execution logs** - Full history of every job run (stdout, stderr, artifacts)
+- **Network isolation** - Jobs run with no network by default, optional allowlist for API calls
+- **Replay to debug** - Rerun past jobs with exact same code and inputs
+- **Self-hosted** - Runs on your machine, works offline, zero per-execution cost
+
+## Quick Start (Library Mode)
+
+```bash
+pip install tako-vm
+```
+
+```python
+from tako_vm import Sandbox
+
+# Basic execution
+with Sandbox() as sb:
+    result = sb.run("print('Hello from sandbox!')")
+    print(result.stdout)
+
+# With dependencies (installed via uv, cached for speed)
+with Sandbox() as sb:
+    result = sb.run("""
+import pandas as pd
+print(pd.__version__)
+""", requirements=["pandas"])
+
+# With local packages
+sb = Sandbox(package_dirs=["./my_utils"])
+result = sb.run("from my_utils import helper; helper.process()")
+```
+
+The first run builds the executor Docker image automatically (~30 seconds one-time setup).
+
+## Quick Start (Server Mode)
+
+For production workloads with job queuing, retries, and execution history:
+
+```zsh
+# Clone and install
+git clone https://github.com/example/tako-vm.git && cd tako-vm
+pip install -e ".[server]"
+
+# Build executor image and start server
+docker build -t code-executor:latest -f docker/Dockerfile.executor .
+tako-vm server
+```
+
+```bash
+# Execute code via API
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{"code": "print(1 + 1)", "requirements": ["requests"]}'
+```
 
 ## Overview
 
@@ -8,24 +79,22 @@ Tako VM executes Python code in isolated Docker containers with:
 - **Security** - Network isolation, read-only filesystem, seccomp filtering, resource limits
 - **Configurability** - Pydantic-validated YAML config with env var overrides
 - **Job Types** - Pre-configured environments with network control per job type
-- **Audit Trail** - Full execution records with timing, artifacts, and error details
+- **Fast Dependencies** - Runtime package installation via [uv](https://github.com/astral-sh/uv) (~10x faster than pip)
+- **Execution History** - Full job records with timing, artifacts, and error details
 
-## Quick Start
-
-```zsh
-# Clone and install with uv
-git clone https://github.com/example/tako-vm.git && cd tako-vm
-uv venv && source .venv/bin/activate
-uv pip install -e ".[server]"
-
-# Build base image and start
-docker build -t code-executor:latest .
-tako-vm server
 ```
-
-Or run the interactive demo:
-```bash
-./demo.sh
+┌──────────────┐
+│  Your Code   │
+│  ──────────  │    ┌─────────────────────────────────────────┐
+│  Sandbox()   │───▶│           Docker Container              │
+│  or API call │    │  ┌───────────────────────────────────┐  │
+└──────────────┘    │  │ 1. uv pip install (if needed)     │  │
+                    │  │ 2. Run as sandbox user (uid 1000) │  │
+                    │  │ 3. Return stdout/stderr/artifacts │  │
+                    │  └───────────────────────────────────┘  │
+                    │  --network=none  --read-only            │
+                    │  --cap-drop=ALL  --security-opt=...     │
+                    └─────────────────────────────────────────┘
 ```
 
 ## Installation
@@ -41,14 +110,14 @@ Or run the interactive demo:
 ```zsh
 uv venv && source .venv/bin/activate
 uv pip install -e ".[server]"
-docker build -t code-executor:latest .
+docker build -t code-executor:latest -f docker/Dockerfile.executor .
 ```
 
 ### With pip
 
 ```bash
 pip install tako-vm[server]
-docker build -t code-executor:latest .
+docker build -t code-executor:latest -f docker/Dockerfile.executor .
 ```
 
 ## CLI Commands
@@ -124,6 +193,16 @@ See [tako_vm.yaml.example](tako_vm.yaml.example) for all options with documentat
 
 Job types are pre-configured execution environments with specific dependencies and limits.
 
+### How Dependencies Work
+
+Tako VM uses **runtime dependency installation** with [uv](https://github.com/astral-sh/uv):
+
+1. A single base image (`code-executor:latest`) handles all job types
+2. When a job runs, dependencies are installed via `uv pip install` (fast!)
+3. Dependencies are cached in a Docker volume for repeated installs
+
+This approach is simpler than pre-building images for each job type, with minimal startup overhead.
+
 ### Built-in Types
 
 | Type | Packages | Network | Use Case |
@@ -169,6 +248,24 @@ job_types:
       - "api.example.com"
 ```
 
+> **Note:** Jobs with runtime requirements need network access to install packages. If `network_enabled: false` with requirements, Tako VM temporarily uses bridge network for installation, then runs code with isolation. For true network isolation with dependencies, use pre-built images (see below).
+
+### Pre-built Images (Optional)
+
+For high-throughput production or true network isolation, you can pre-build images:
+
+```bash
+# Build a specific job type image with dependencies baked in
+tako-vm build job-type data-processing
+
+# Then configure to use the pre-built image
+job_types:
+  - name: data-processing
+    base_image: tako-vm-data-processing:latest
+    requirements: []  # Already installed in image
+    network_enabled: false  # True isolation now possible
+```
+
 ## API Usage
 
 ### Execute Code
@@ -210,17 +307,51 @@ curl http://localhost:8000/jobs/abc123/result
 | `/job-types` | GET | List available job types |
 | `/health` | GET | Health check |
 
+### Advanced Features
+
+Tako VM provides job-native runtime capabilities for production workflows:
+
+**Idempotent Execution** - Submit jobs with `idempotency_key` for safe retries:
+```bash
+curl -X POST http://localhost:8000/execute/async \
+  -H "Content-Type: application/json" \
+  -d '{"code": "...", "input_data": {}, "idempotency_key": "my-unique-key"}'
+```
+
+**Rerun/Fork** - "Time machine" debugging to reproduce or modify past executions:
+```bash
+# Rerun with exact same code and inputs
+curl -X POST http://localhost:8000/jobs/{job_id}/rerun
+
+# Fork with new code, same inputs
+curl -X POST http://localhost:8000/jobs/{job_id}/fork \
+  -d '{"code": "print(\"modified version\")"}'
+```
+
+**Artifact Downloads** - Direct artifact retrieval with ETag caching:
+```bash
+curl http://localhost:8000/jobs/{job_id}/artifacts/result.json
+```
+
+**Complete Job Records** - Use `?view=full` for full execution details including pinned environment references (`job_ref`), content hashes, lineage tracking, and resource metrics:
+```bash
+curl http://localhost:8000/jobs/{job_id}/result?view=full
+```
+
+See [docs/api/rest.md](docs/api/rest.md) for complete API reference and [docs/architecture.md](docs/architecture.md) for system diagrams.
+
 ## Security Features
 
 | Feature | Description |
 |---------|-------------|
-| Network Isolation | `--network=none` by default |
+| Network Isolation | `--network=none` by default (bridge for dep install) |
 | Read-Only Filesystem | `--read-only` with tmpfs for /tmp |
 | Seccomp Filtering | Syscall whitelist via seccomp profile |
 | Resource Limits | Memory, CPU, file size, process count |
-| Non-Root Execution | Runs as uid 1000 inside container |
+| Non-Root Execution | Code runs as uid 1000 (sandbox user) via gosu |
 | Capability Drop | `--cap-drop=ALL` |
 | No Privilege Escalation | `--security-opt=no-new-privileges` |
+| Dependency Caching | Shared uv cache volume across containers |
 
 ## SDK Usage
 
@@ -256,7 +387,7 @@ tako-vm/
 │   │   └── queue.py         # Worker pool & job queue
 │   ├── execution/           # Docker execution layer
 │   │   ├── worker.py        # Container executor
-│   │   └── builder.py       # Image builder
+│   │   └── builder.py       # Image builder (for pre-built images)
 │   ├── sdk/                 # Python SDK
 │   │   └── client.py        # TakoVM client
 │   ├── cli.py               # CLI entry point
@@ -264,9 +395,12 @@ tako-vm/
 │   ├── models.py            # Data models
 │   ├── storage.py           # SQLite persistence
 │   └── job_types.py         # Job type definitions
+├── docker/
+│   ├── Dockerfile.executor  # Base executor image (with uv)
+│   ├── Dockerfile.server    # API server image
+│   └── entrypoint.sh        # Container entrypoint (installs deps, runs code)
 ├── tako_vm.yaml.example     # Example configuration
 ├── demo.sh                  # Interactive demo script
-├── docker/                     # Container images
 └── pyproject.toml           # Package definition
 ```
 

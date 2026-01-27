@@ -1,6 +1,6 @@
 # Tako VM Roadmap
 
-## Current Status: v2.1.0
+## Current Status: v2.2.0
 
 Production-ready sandbox runtime with:
 - ✅ Docker container isolation
@@ -13,6 +13,14 @@ Production-ready sandbox runtime with:
 - ✅ Dead letter queue for failed jobs
 - ✅ Correlation IDs for request tracing
 - ✅ Structured logging with JSON format
+- ✅ Idempotency support for async jobs
+- ✅ Rerun/fork job lineage tracking
+- ✅ Paginated API responses
+- ✅ Artifact downloads with ETag caching
+- ✅ Full view response with resource usage metrics
+- ✅ Dockerfile build input validation (injection prevention)
+- ✅ Artifact filename security validation
+- ✅ Thread-safe worker pool operations
 
 ---
 
@@ -20,11 +28,16 @@ Production-ready sandbox runtime with:
 
 ### Security Enhancements
 
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| **gVisor support** | High | Add `docker_runtime: runsc` config option for stronger isolation |
-| Kata Containers support | Medium | Lightweight VM isolation |
-| User namespace remapping | Medium | Run containers with mapped UIDs |
+| Feature | Priority | Status | Description |
+|---------|----------|--------|-------------|
+| **/proc exposure mitigation** | **CRITICAL** | 🔴 Planned | Prevent user code from reading `/proc/self/environ`, `/proc/self/exe` ([#issue](docs/security/proc-exposure-vulnerability.md)) |
+| **Seccomp profile by default** | **HIGH** | 🟡 In Progress | Enable seccomp syscall filtering by default (config created) |
+| **Remove env var secrets** | **CRITICAL** | 🔴 Planned | Migrate from env vars to read-only config files for sensitive data |
+| AppArmor/SELinux profiles | HIGH | 🔴 Planned | Mandatory access control to restrict `/proc` access |
+| **gVisor support** | High | Planned | Add `docker_runtime: runsc` config option for stronger isolation |
+| Kata Containers support | Medium | Planned | Lightweight VM isolation |
+| User namespace remapping | Medium | Planned | Run containers with mapped UIDs |
+| Security audit logging | Medium | Planned | Log suspicious activity (proc reads, failed syscalls) |
 
 ### Scalability
 
