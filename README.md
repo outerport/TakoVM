@@ -123,20 +123,52 @@ Tako VM executes Python code in isolated Docker containers with:
 - **Fast Dependencies** - Runtime package installation via [uv](https://github.com/astral-sh/uv) (~10x faster than pip)
 - **Execution History** - Full job records with timing, artifacts, and error details
 
+```mermaid
+flowchart TB
+    subgraph Client["Your Application"]
+        SDK["Sandbox() / SDK"]
+        API["HTTP API calls"]
+    end
+
+    subgraph Server["Tako VM Server"]
+        FastAPI["FastAPI Server<br/>:8000"]
+        Queue["Job Queue"]
+        Workers["Worker Pool<br/>(configurable)"]
+        DB[(SQLite<br/>Execution Records)]
+    end
+
+    subgraph Container["Docker Container (per job)"]
+        direction TB
+        Entry["entrypoint.sh"]
+        UV["uv pip install<br/>(cached)"]
+        Code["Your Code<br/>(sandbox user)"]
+        Input["/input/data.json"]
+        Output["/output/result.json"]
+    end
+
+    SDK -->|"Library Mode<br/>(direct)"| Container
+    API --> FastAPI
+    FastAPI --> Queue
+    Queue --> Workers
+    Workers --> Container
+    FastAPI <--> DB
+
+    Entry --> UV --> Code
+    Input -.->|read| Code
+    Code -.->|write| Output
+
+    style Container fill:#e1f5fe
+    style Server fill:#fff3e0
+    style Client fill:#e8f5e9
 ```
-┌──────────────┐
-│  Your Code   │
-│  ──────────  │    ┌─────────────────────────────────────────┐
-│  Sandbox()   │───▶│           Docker Container              │
-│  or API call │    │  ┌───────────────────────────────────┐  │
-└──────────────┘    │  │ 1. uv pip install (if needed)     │  │
-                    │  │ 2. Run as sandbox user (uid 1000) │  │
-                    │  │ 3. Return stdout/stderr/artifacts │  │
-                    │  └───────────────────────────────────┘  │
-                    │  --network=none  --read-only            │
-                    │  --cap-drop=ALL  --security-opt=...     │
-                    └─────────────────────────────────────────┘
-```
+
+**Security layers applied to every container:**
+- `--network=none` (isolated by default)
+- `--read-only` filesystem
+- `--cap-drop=ALL`
+- `--security-opt=no-new-privileges`
+- Seccomp syscall filtering
+- Non-root execution (uid 1000)
 
 ## Installation
 
