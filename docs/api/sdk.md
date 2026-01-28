@@ -8,7 +8,7 @@ The Tako VM Python SDK provides two ways to execute code:
 ## Installation
 
 ```bash
-pip install tako-vm
+uv pip install tako-vm
 ```
 
 ---

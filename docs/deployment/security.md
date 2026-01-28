@@ -390,7 +390,7 @@ High-Security Model (separate hosts):
 └─────────────┘     └─────────────────────────────┘
 ```
 
-This separates the API server from the execution environment entirely, but adds significant complexity. See the project ROADMAP.md for future plans.
+This separates the API server from the execution environment entirely, but adds significant complexity.
 
 ## Security Checklist
 

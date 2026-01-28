@@ -223,7 +223,7 @@ With container pooling + distribution: **1000+ jobs/sec**
 
 ### 4. Lighter Isolation Options
 
-**Status**: Planned (see ROADMAP.md)
+**Status**: Planned
 
 For even higher throughput, consider lighter isolation than full Docker containers:
 

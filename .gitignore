@@ -158,6 +158,9 @@ venv.bak/
 tako_vm.yaml
 .tako_vm/
 
+# Internal docs (roadmap, strategy, etc.)
+docs-internal/
+
 # mypy
 .mypy_cache/
 .dmypy.json

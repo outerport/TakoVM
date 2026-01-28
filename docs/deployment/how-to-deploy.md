@@ -31,16 +31,17 @@ Any cloud provider works (AWS EC2, GCP, DigitalOcean, etc.):
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 
-# Install Python
+# Install Python and uv
 sudo apt update
-sudo apt install -y python3 python3-pip
+sudo apt install -y python3
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone Tako VM
 git clone https://github.com/example/tako-vm.git
 cd tako-vm
 
 # Install Tako VM with server dependencies
-pip3 install ".[server]"
+uv pip install ".[server]"
 ```
 
 ### 3. Build the Executor Image
@@ -287,9 +288,10 @@ if ! command -v docker &> /dev/null; then
     newgrp docker
 fi
 
-# Install Python
+# Install Python and uv
 sudo apt-get update
-sudo apt-get install -y python3 python3-pip git
+sudo apt-get install -y python3 git
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone Tako VM
 if [ ! -d "tako-vm" ]; then
@@ -298,7 +300,7 @@ fi
 cd tako-vm
 
 # Install Tako VM with server dependencies
-pip3 install ".[server]"
+uv pip install ".[server]"
 
 # Build executor image
 docker build -t code-executor:latest .

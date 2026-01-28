@@ -4,47 +4,38 @@
 
 - **Docker** 20.10 or later
 - **Python** 3.9 or later
-- **uv** (recommended) or pip
+- **[uv](https://github.com/astral-sh/uv)**
 
 ## Install Tako VM
 
-### Option 1: Install with uv (Recommended)
+### Install from PyPI
 
 ```bash
 # Create virtual environment and install
 uv venv && source .venv/bin/activate
-uv pip install tako-vm[server]
 
-# Or from source
-git clone https://github.com/example/tako-vm.git
-cd tako-vm
-uv pip install -e ".[server]"
-```
-
-### Option 2: Install with pip
-
-```bash
 # SDK client only - for connecting to an existing Tako VM server
-pip install tako-vm
+uv pip install tako-vm
 
 # Full installation with server components
-pip install tako-vm[server]
+uv pip install tako-vm[server]
 
 # All dependencies including dev tools
-pip install tako-vm[all]
+uv pip install tako-vm[all]
 ```
 
-### Option 3: Install from Source
+### Install from Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/example/tako-vm.git
 cd tako-vm
+uv venv && source .venv/bin/activate
 
 # Install in development mode
-pip install -e .              # SDK only
-pip install -e ".[server]"    # With server
-pip install -e ".[dev]"       # With dev dependencies
+uv pip install -e .              # SDK only
+uv pip install -e ".[server]"    # With server
+uv pip install -e ".[dev]"       # With dev dependencies
 ```
 
 ## Build the Docker Image
@@ -99,10 +90,10 @@ Expected output:
 
 | Extra | Command | Description |
 |-------|---------|-------------|
-| `server` | `pip install tako-vm[server]` | FastAPI server, uvicorn, YAML config |
-| `dev` | `pip install tako-vm[dev]` | pytest, ruff, development tools |
-| `docs` | `pip install tako-vm[docs]` | MkDocs for documentation |
-| `all` | `pip install tako-vm[all]` | All production dependencies |
+| `server` | `uv pip install tako-vm[server]` | FastAPI server, uvicorn, YAML config |
+| `dev` | `uv pip install tako-vm[dev]` | pytest, ruff, development tools |
+| `docs` | `uv pip install tako-vm[docs]` | MkDocs for documentation |
+| `all` | `uv pip install tako-vm[all]` | All production dependencies |
 
 ## Directory Structure
 

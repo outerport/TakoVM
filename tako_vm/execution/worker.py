@@ -593,6 +593,7 @@ class CodeExecutor:
         cmd = [
             "docker", "run",
             "--rm",
+            "--init",  # Faster signal handling with tini
             "--read-only",
             "--cap-drop=ALL",
             "--cap-add=SETUID",  # Required for gosu to switch user

@@ -7,7 +7,7 @@ Tako VM executes untrusted Python code in isolated Docker containers with enterp
 ## Quick Start (Library Mode)
 
 ```bash
-pip install tako-vm
+uv pip install tako-vm
 ```
 
 ```python
@@ -31,8 +31,8 @@ No server setup required. The Docker image builds automatically on first run.
 ## Installation
 
 ```bash
-pip install tako-vm              # Library mode (Sandbox class)
-pip install tako-vm[server]      # Server mode (REST API)
+uv pip install tako-vm              # Library mode (Sandbox class)
+uv pip install tako-vm[server]      # Server mode (REST API)
 ```
 
 ## Library Mode Examples

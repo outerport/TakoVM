@@ -6,7 +6,7 @@ Stop rebuilding Redis + Bull + Postgres for async job processing.
 Tako VM handles job queues, retries, and execution history out of the box.
 
 ```python
-pip install tako-vm
+uv pip install tako-vm
 
 from tako_vm import Sandbox
 
@@ -27,7 +27,7 @@ with Sandbox() as sb:
 ## Quick Start (Library Mode)
 
 ```bash
-pip install tako-vm
+uv pip install tako-vm
 ```
 
 ```python
@@ -59,7 +59,7 @@ For production workloads with job queuing, retries, and execution history:
 ```zsh
 # Clone and install
 git clone https://github.com/example/tako-vm.git && cd tako-vm
-pip install -e ".[server]"
+uv pip install -e ".[server]"
 
 # Build executor image and start server
 docker build -t code-executor:latest -f docker/Dockerfile.executor .
@@ -127,20 +127,13 @@ Tako VM executes Python code in isolated Docker containers with:
 
 - Docker 20.10+
 - Python 3.9+
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
+- [uv](https://github.com/astral-sh/uv)
 
-### With uv (Recommended)
+### Install
 
 ```zsh
 uv venv && source .venv/bin/activate
 uv pip install -e ".[server]"
-docker build -t code-executor:latest -f docker/Dockerfile.executor .
-```
-
-### With pip
-
-```bash
-pip install tako-vm[server]
 docker build -t code-executor:latest -f docker/Dockerfile.executor .
 ```
 

@@ -7,7 +7,7 @@ This guide walks you through executing your first code in Tako VM.
 The simplest way to use Tako VM - no server required:
 
 ```bash
-pip install tako-vm
+uv pip install tako-vm
 ```
 
 ```python

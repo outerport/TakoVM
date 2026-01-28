@@ -7,10 +7,10 @@ Job types are pre-configured execution environments with specific packages and r
 Installing packages at runtime is slow. Job types pre-install packages so execution is fast:
 
 ```
-WITHOUT Job Types (slow)            WITH Job Types (fast)
-────────────────────────            ─────────────────────
+WITHOUT Job Types (slower)          WITH Job Types (fast)
+──────────────────────────          ─────────────────────
 Start container                     Start container (pre-built)
-pip install numpy pandas  ← SLOW    Execute code
+uv pip install numpy pandas         Execute code
 Execute code                        Return results
 Return results
 ```
