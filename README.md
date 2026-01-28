@@ -46,42 +46,24 @@ Tako VM executes Python code in isolated Docker containers with:
 - **Execution History** - Full job records with timing, artifacts, and error details
 
 ```mermaid
-flowchart TB
-    subgraph Client["Your Application"]
-        SDK["Sandbox() / SDK"]
-        API["HTTP API calls"]
+flowchart LR
+    subgraph Client
+        Sandbox[Sandbox]
+        SDK[TakoVM Client]
     end
 
-    subgraph Server["Tako VM Server"]
-        FastAPI["FastAPI Server<br/>:8000"]
-        Queue["Job Queue"]
-        Workers["Worker Pool<br/>(configurable)"]
-        DB[(SQLite<br/>Execution Records)]
+    subgraph Server
+        API[FastAPI :8000]
+        Queue[Job Queue]
+        Pool[Worker Pool]
+        DB[(SQLite)]
     end
 
-    subgraph Container["Docker Container (per job)"]
-        direction TB
-        Entry["entrypoint.sh"]
-        UV["uv pip install<br/>(cached)"]
-        Code["Your Code<br/>(sandbox user)"]
-        Input["/input/data.json"]
-        Output["/output/result.json"]
-    end
+    Container[Docker Container]
 
-    SDK -->|"Library Mode<br/>(direct)"| Container
-    API --> FastAPI
-    FastAPI --> Queue
-    Queue --> Workers
-    Workers --> Container
-    FastAPI <--> DB
-
-    Entry --> UV --> Code
-    Input -.->|read| Code
-    Code -.->|write| Output
-
-    style Container fill:#e1f5fe
-    style Server fill:#fff3e0
-    style Client fill:#e8f5e9
+    Sandbox -->|direct| Container
+    SDK --> API --> Queue --> Pool --> Container
+    API <--> DB
 ```
 
 **Security layers applied to every container:**
