@@ -48,7 +48,24 @@ print(pd.__version__)
 # With local packages
 sb = Sandbox(package_dirs=["./my_utils"])
 result = sb.run("from my_utils import helper; helper.process()")
+
+# With input/output data
+with Sandbox() as sb:
+    result = sb.run("""
+import json
+with open("/input/data.json") as f:
+    data = json.load(f)
+result = {"sum": data["x"] + data["y"]}
+with open("/output/result.json", "w") as f:
+    json.dump(result, f)
+""", input_data={"x": 10, "y": 20})
+    print(result.output)  # {"sum": 30}
 ```
+
+Your code runs in a container with these paths:
+- `/input/data.json` - Your `input_data` as JSON (read-only)
+- `/output/result.json` - Write output here, returned as `result.output`
+- `/tmp/` - Temporary files (read-write)
 
 The first run builds the executor Docker image automatically (~30 seconds one-time setup).
 
