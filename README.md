@@ -73,6 +73,30 @@ curl -X POST http://localhost:8000/execute \
   -d '{"code": "print(1 + 1)", "requirements": ["requests"]}'
 ```
 
+## SDK Usage
+
+```python
+from dataclasses import dataclass
+import tako_vm
+
+tako_vm.configure('http://localhost:8000')
+
+@dataclass
+class Input:
+    x: int
+    y: int
+
+@dataclass
+class Output:
+    result: int
+
+def add(input: Input) -> Output:
+    return Output(result=input.x + input.y)
+
+result = tako_vm.send(add, Input(10, 20))
+print(result.result)  # 30
+```
+
 ## Overview
 
 Tako VM executes Python code in isolated Docker containers with:
@@ -346,36 +370,26 @@ See [docs/api/rest.md](docs/api/rest.md) for complete API reference and [docs/ar
 |---------|-------------|
 | Network Isolation | `--network=none` by default (bridge for dep install) |
 | Read-Only Filesystem | `--read-only` with tmpfs for /tmp |
-| Seccomp Filtering | Syscall whitelist via seccomp profile |
+| Seccomp Filtering | Hardened allowlist blocking 47+ dangerous syscalls (see below) |
 | Resource Limits | Memory, CPU, file size, process count |
 | Non-Root Execution | Code runs as uid 1000 (sandbox user) via gosu |
 | Capability Drop | `--cap-drop=ALL` |
 | No Privilege Escalation | `--security-opt=no-new-privileges` |
 | Dependency Caching | Shared uv cache volume across containers |
 
-## SDK Usage
+### Seccomp Profile
 
-```python
-from dataclasses import dataclass
-import tako_vm
+Tako VM uses a hardened seccomp profile ([config/seccomp-default.json](config/seccomp-default.json)) that blocks syscalls commonly used in container escape and privilege escalation:
 
-tako_vm.configure('http://localhost:8000')
+**Blocked syscalls include:**
+- **Privilege escalation**: `setuid`, `setgid`, `setresuid`, `setresgid`, `capset`
+- **Permission manipulation**: `chmod`, `chown`, `fchmod`, `fchown`
+- **Container escape**: `unshare`, `clone3`, `ptrace`, `process_vm_readv/writev`
+- **Kernel interfaces**: `bpf`, `perf_event_open`, `io_uring_*`, `userfaultfd`
+- **Module loading**: `init_module`, `finit_module`, `delete_module`
+- **Kernel keyring**: `add_key`, `request_key`, `keyctl`
 
-@dataclass
-class Input:
-    x: int
-    y: int
-
-@dataclass
-class Output:
-    result: int
-
-def add(input: Input) -> Output:
-    return Output(result=input.x + input.y)
-
-result = tako_vm.send(add, Input(10, 20))
-print(result.result)  # 30
-```
+The profile allows ~200 syscalls required for normal Python execution (file I/O, networking, memory management, signals) while blocking privileged operations. This defense-in-depth approach complements Docker's other isolation mechanisms.
 
 ## Project Structure
 
