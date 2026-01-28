@@ -50,9 +50,9 @@ print(f"Processed {len(values)} values with numpy")
         json={
             "code": code,
             "input_data": {"values": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
-            "job_type": "data-processing"  # <-- Specify environment
+            "job_type": "data-processing",  # <-- Specify environment
         },
-        timeout=120
+        timeout=120,
     )
 
     result = response.json()

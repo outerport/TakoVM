@@ -199,9 +199,12 @@ class Sandbox:
 
         result = subprocess.run(
             [
-                "docker", "build",
-                "-t", self.config.image,
-                "-f", str(dockerfile),
+                "docker",
+                "build",
+                "-t",
+                self.config.image,
+                "-f",
+                str(dockerfile),
                 str(package_dir),
             ],
             capture_output=True,
@@ -210,9 +213,7 @@ class Sandbox:
         )
 
         if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to build Docker image:\n{result.stderr}"
-            )
+            raise RuntimeError(f"Failed to build Docker image:\n{result.stderr}")
 
         print("Image built successfully.")
 
@@ -364,7 +365,8 @@ class Sandbox:
     ) -> List[str]:
         """Build the docker run command with security flags."""
         cmd = [
-            "docker", "run",
+            "docker",
+            "run",
             "--rm",
             "--init",  # Faster signal handling with tini
             "--read-only",
@@ -386,22 +388,26 @@ class Sandbox:
             cmd.append(f"--mount=type=volume,source={UV_CACHE_VOLUME},target=/root/.cache/uv")
 
         # Resource limits
-        cmd.extend([
-            f"--memory={self.config.memory_limit}",
-            f"--memory-swap={self.config.memory_limit}",
-            f"--cpus={self.config.cpu_limit}",
-            "--pids-limit=100",
-        ])
+        cmd.extend(
+            [
+                f"--memory={self.config.memory_limit}",
+                f"--memory-swap={self.config.memory_limit}",
+                f"--cpus={self.config.cpu_limit}",
+                "--pids-limit=100",
+            ]
+        )
 
         # Mount directories
         # Use larger /tmp when requirements need to be installed (packages go to /tmp/site-packages)
         tmp_size = "300m" if has_requirements else "100m"
-        cmd.extend([
-            f"--mount=type=bind,source={code_dir.absolute()},target=/code,readonly",
-            f"--mount=type=bind,source={input_dir.absolute()},target=/input,readonly",
-            f"--mount=type=bind,source={output_dir.absolute()},target=/output",
-            f"--tmpfs=/tmp:rw,exec,nosuid,size={tmp_size}",
-        ])
+        cmd.extend(
+            [
+                f"--mount=type=bind,source={code_dir.absolute()},target=/code,readonly",
+                f"--mount=type=bind,source={input_dir.absolute()},target=/input,readonly",
+                f"--mount=type=bind,source={output_dir.absolute()},target=/output",
+                f"--tmpfs=/tmp:rw,exec,nosuid,size={tmp_size}",
+            ]
+        )
 
         # Mount local package directories
         pythonpath_parts = []

@@ -6,8 +6,10 @@ Provides both legacy synchronous execution and new async job queue execution.
 
 # Suppress LibreSSL warnings on macOS before any other imports
 import warnings
+
 try:
     from urllib3.exceptions import NotOpenSSLWarning
+
     warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 except ImportError:
     pass
@@ -18,24 +20,23 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Query, Response
-from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
-from tako_vm.security import sanitize_error
-
-from tako_vm.execution.worker import CodeExecutor
+from tako_vm.config import TakoVMConfig, get_config
 from tako_vm.execution.health import get_circuit_breaker, startup_cleanup
+from tako_vm.execution.worker import CodeExecutor
 from tako_vm.job_types import JobTypeRegistry
-from tako_vm.models import ExecutionRecord, sha256_json, sha256_content
-from tako_vm.config import get_config, TakoVMConfig
-from tako_vm.storage import ExecutionStorage
-from tako_vm.server.queue import WorkerPool
+from tako_vm.models import ExecutionRecord, sha256_content, sha256_json
+from tako_vm.security import sanitize_error
 from tako_vm.server.correlation import (
     CorrelationIdMiddleware,
     configure_logging_with_correlation,
-    get_correlation_id
+    get_correlation_id,
 )
+from tako_vm.server.queue import WorkerPool
+from tako_vm.storage import ExecutionStorage
 
 # Configure logging with correlation ID support
 # Note: Log level will be reconfigured in lifespan() based on config
@@ -58,10 +59,7 @@ def _configure_log_level(log_level: str) -> None:
 
 
 def compute_idempotency_fingerprint(
-    code: str,
-    input_data: dict,
-    job_type: Optional[str],
-    timeout: Optional[int]
+    code: str, input_data: dict, job_type: Optional[str], timeout: Optional[int]
 ) -> str:
     """
     Compute fingerprint of request parameters for idempotency validation.
@@ -69,12 +67,14 @@ def compute_idempotency_fingerprint(
     This fingerprint is used to detect when an idempotency key is reused
     with different parameters (which should return 409 Conflict).
     """
-    return sha256_json({
-        "code_hash": sha256_content(code),
-        "input_hash": sha256_json(input_data),
-        "job_type": job_type or "default",
-        "timeout": timeout,
-    })
+    return sha256_json(
+        {
+            "code_hash": sha256_content(code),
+            "input_hash": sha256_json(input_data),
+            "job_type": job_type or "default",
+            "timeout": timeout,
+        }
+    )
 
 
 # Keyed lock for idempotency (prevents race conditions under concurrent requests)
@@ -168,7 +168,7 @@ async def lifespan(app: FastAPI):
         storage=state.storage,
         max_workers=state.config.max_workers,
         max_queue_size=state.config.max_queue_size,
-        queue_wait_timeout=state.config.queue_wait_timeout
+        queue_wait_timeout=state.config.queue_wait_timeout,
     )
     await state.worker_pool.start()
 
@@ -196,7 +196,7 @@ app = FastAPI(
     title="Tako VM - Secure Code Executor API",
     description="Execute AI-generated Python code in isolated containers",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add correlation ID middleware (must be added before other middleware)
@@ -206,49 +206,58 @@ app.add_middleware(CorrelationIdMiddleware)
 # Request/Response Models
 class ExecuteRequest(BaseModel):
     """Request model for code execution."""
+
     model_config = {"extra": "forbid"}
 
-    code: str = Field(..., min_length=1, max_length=100_000, description="Python code to execute (max 100KB)")
-    input_data: Dict[str, Any] = Field(default_factory=dict, description="Input data as JSON (max 1MB when serialized)")
-    timeout: Optional[int] = Field(default=None, ge=1, le=300, description="Timeout in seconds (1-300)")
+    code: str = Field(
+        ..., min_length=1, max_length=100_000, description="Python code to execute (max 100KB)"
+    )
+    input_data: Dict[str, Any] = Field(
+        default_factory=dict, description="Input data as JSON (max 1MB when serialized)"
+    )
+    timeout: Optional[int] = Field(
+        default=None, ge=1, le=300, description="Timeout in seconds (1-300)"
+    )
     job_type: Optional[str] = Field(
         default=None,
         max_length=128,
-        pattern=r'^[a-zA-Z0-9_-]+(@[a-zA-Z0-9_.@:-]+)?$',
-        description="Job type name (e.g., 'data-processing' or 'data-processing@v1.0.0')"
+        pattern=r"^[a-zA-Z0-9_-]+(@[a-zA-Z0-9_.@:-]+)?$",
+        description="Job type name (e.g., 'data-processing' or 'data-processing@v1.0.0')",
     )
     idempotency_key: Optional[str] = Field(
         default=None,
         min_length=8,
         max_length=255,
-        pattern=r'^[a-zA-Z0-9_-]+$',
-        description="Client-provided key for idempotent job submission (alphanumeric, 8-255 chars)"
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Client-provided key for idempotent job submission (alphanumeric, 8-255 chars)",
     )
     requirements: Optional[List[str]] = Field(
         default=None,
         max_length=50,
-        description="Python packages to install at runtime (e.g., ['pandas', 'numpy>=1.20'])"
+        description="Python packages to install at runtime (e.g., ['pandas', 'numpy>=1.20'])",
     )
 
-    @field_validator('code')
+    @field_validator("code")
     @classmethod
     def code_not_empty(cls, v):
         if not v or not v.strip():
-            raise ValueError('Code cannot be empty')
+            raise ValueError("Code cannot be empty")
         return v
 
-    @field_validator('input_data')
+    @field_validator("input_data")
     @classmethod
     def validate_input_data_size(cls, v):
         import json
+
         serialized = json.dumps(v)
         if len(serialized) > 1_048_576:  # 1MB limit
-            raise ValueError('input_data exceeds 1MB limit when serialized')
+            raise ValueError("input_data exceeds 1MB limit when serialized")
         return v
 
 
 class ExecuteResponse(BaseModel):
     """Response model for code execution (legacy)."""
+
     model_config = {"extra": "forbid"}
 
     success: bool
@@ -262,13 +271,16 @@ class ExecuteResponse(BaseModel):
 
 
 # Status type aliases for API type safety
-QueueStatus = Literal["queued", "pending", "running", "succeeded", "failed", "timeout", "oom", "cancelled"]
+QueueStatus = Literal[
+    "queued", "pending", "running", "succeeded", "failed", "timeout", "oom", "cancelled"
+]
 HealthStatus = Literal["healthy", "degraded"]
 RelationshipType = Literal["rerun", "fork"]
 
 
 class AsyncExecuteResponse(BaseModel):
     """Response model for async execution."""
+
     model_config = {"extra": "forbid"}
 
     job_id: str
@@ -277,17 +289,28 @@ class AsyncExecuteResponse(BaseModel):
 
 class JobStatusResponse(BaseModel):
     """Response model for job status."""
+
     model_config = {"extra": "forbid"}
 
     job_id: str = Field(..., description="Unique job identifier")
-    status: QueueStatus = Field(..., description="Current status: pending, running, queued, succeeded, failed, timeout, oom, cancelled")
-    created_at: Optional[str] = Field(default=None, description="ISO 8601 timestamp when job was created")
-    duration_ms: Optional[int] = Field(default=None, description="Execution duration in milliseconds (if completed)")
-    queue_position: Optional[int] = Field(default=None, description="Position in queue (if pending)")
+    status: QueueStatus = Field(
+        ...,
+        description="Current status: pending, running, queued, succeeded, failed, timeout, oom, cancelled",
+    )
+    created_at: Optional[str] = Field(
+        default=None, description="ISO 8601 timestamp when job was created"
+    )
+    duration_ms: Optional[int] = Field(
+        default=None, description="Execution duration in milliseconds (if completed)"
+    )
+    queue_position: Optional[int] = Field(
+        default=None, description="Position in queue (if pending)"
+    )
 
 
 class ExecutionRecordResponse(BaseModel):
     """Response model for execution record."""
+
     model_config = {"extra": "forbid"}
 
     execution_id: str
@@ -305,7 +328,7 @@ class ExecutionRecordResponse(BaseModel):
     error: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def from_record(cls, record: ExecutionRecord) -> 'ExecutionRecordResponse':
+    def from_record(cls, record: ExecutionRecord) -> "ExecutionRecordResponse":
         return cls(
             execution_id=record.execution_id,
             status=record.status,
@@ -325,6 +348,7 @@ class ExecutionRecordResponse(BaseModel):
 
 class JobTypeResponse(BaseModel):
     """Response model for job type info."""
+
     model_config = {"extra": "forbid"}
 
     name: str
@@ -338,6 +362,7 @@ class JobTypeResponse(BaseModel):
 
 class CircuitBreakerStatus(BaseModel):
     """Circuit breaker status for health monitoring."""
+
     model_config = {"extra": "forbid"}
 
     state: Literal["closed", "open", "half_open"] = Field(..., description="Circuit breaker state")
@@ -348,6 +373,7 @@ class CircuitBreakerStatus(BaseModel):
 
 class QueueStatsResponse(BaseModel):
     """Worker pool queue statistics."""
+
     model_config = {"extra": "forbid"}
 
     pending: int = Field(..., description="Number of jobs waiting in queue")
@@ -358,6 +384,7 @@ class QueueStatsResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Response model for health check."""
+
     model_config = {"extra": "forbid"}
 
     status: HealthStatus
@@ -370,6 +397,7 @@ class HealthResponse(BaseModel):
 
 class PoolStatsResponse(BaseModel):
     """Response model for worker pool stats (deprecated, use QueueStatsResponse)."""
+
     model_config = {"extra": "forbid"}
 
     pending: int = Field(..., description="Number of jobs waiting in queue")
@@ -380,6 +408,7 @@ class PoolStatsResponse(BaseModel):
 
 class PaginatedResponse(BaseModel):
     """Paginated list response with metadata."""
+
     model_config = {"extra": "forbid"}
 
     items: List[Any] = Field(..., description="List of items")
@@ -391,6 +420,7 @@ class PaginatedResponse(BaseModel):
 
 class CancelResponse(BaseModel):
     """Response model for job cancellation."""
+
     model_config = {"extra": "forbid"}
 
     status: Literal["cancelled"] = Field(..., description="Cancellation status")
@@ -399,6 +429,7 @@ class CancelResponse(BaseModel):
 
 class DLQStatsResponse(BaseModel):
     """Response model for DLQ statistics."""
+
     model_config = {"extra": "forbid"}
 
     total: int = Field(..., description="Total number of entries in DLQ")
@@ -407,6 +438,7 @@ class DLQStatsResponse(BaseModel):
 
 class BuildResponse(BaseModel):
     """Response model for job type build."""
+
     model_config = {"extra": "forbid"}
 
     status: Literal["built"] = Field(..., description="Build status")
@@ -418,6 +450,7 @@ class BuildResponse(BaseModel):
 
 class DLQRemoveResponse(BaseModel):
     """Response model for DLQ entry removal."""
+
     model_config = {"extra": "forbid"}
 
     status: Literal["removed"] = Field(..., description="Removal status")
@@ -426,41 +459,50 @@ class DLQRemoveResponse(BaseModel):
 
 class RerunRequest(BaseModel):
     """Request model for rerunning a previous execution."""
+
     model_config = {"extra": "forbid"}
 
     job_type: Optional[str] = Field(
         default=None,
         max_length=128,
-        pattern=r'^[a-zA-Z0-9_-]+(@[a-zA-Z0-9_.@:-]+)?$',
-        description="Optional job type override"
+        pattern=r"^[a-zA-Z0-9_-]+(@[a-zA-Z0-9_.@:-]+)?$",
+        description="Optional job type override",
     )
-    timeout: Optional[int] = Field(default=None, ge=1, le=300, description="Optional timeout override (1-300s)")
+    timeout: Optional[int] = Field(
+        default=None, ge=1, le=300, description="Optional timeout override (1-300s)"
+    )
 
 
 class ForkRequest(BaseModel):
     """Request model for forking a previous execution with modified code."""
+
     model_config = {"extra": "forbid"}
 
-    code: str = Field(..., min_length=1, max_length=100_000, description="New Python code to execute")
+    code: str = Field(
+        ..., min_length=1, max_length=100_000, description="New Python code to execute"
+    )
     job_type: Optional[str] = Field(
         default=None,
         max_length=128,
-        pattern=r'^[a-zA-Z0-9_-]+(@[a-zA-Z0-9_.@:-]+)?$',
-        description="Optional job type override"
+        pattern=r"^[a-zA-Z0-9_-]+(@[a-zA-Z0-9_.@:-]+)?$",
+        description="Optional job type override",
     )
-    timeout: Optional[int] = Field(default=None, ge=1, le=300, description="Optional timeout override (1-300s)")
+    timeout: Optional[int] = Field(
+        default=None, ge=1, le=300, description="Optional timeout override (1-300s)"
+    )
 
-    @field_validator('code')
+    @field_validator("code")
     @classmethod
     def code_not_empty(cls, v):
         if not v or not v.strip():
-            raise ValueError('Code cannot be empty')
+            raise ValueError("Code cannot be empty")
         return v
 
 
 # Full response models for ?view=full support
 class ArtifactResponse(BaseModel):
     """Artifact metadata for API responses."""
+
     model_config = {"extra": "forbid"}
 
     name: str = Field(..., description="Artifact filename")
@@ -471,6 +513,7 @@ class ArtifactResponse(BaseModel):
 
 class ResourceUsageResponse(BaseModel):
     """Resource consumption metrics."""
+
     model_config = {"extra": "forbid"}
 
     max_rss_mb: Optional[float] = Field(default=None, description="Peak RSS in MB")
@@ -487,32 +530,45 @@ class ExecutionRecordFullResponse(ExecutionRecordResponse):
     """
 
     # Pinned environment (key differentiator for reproducibility)
-    job_ref: str = Field(..., description="Full job reference with digest (e.g., 'data-processing@sha256:...')")
+    job_ref: str = Field(
+        ..., description="Full job reference with digest (e.g., 'data-processing@sha256:...')"
+    )
 
     # Artifact metadata
     artifacts: List[ArtifactResponse] = Field(default_factory=list, description="Output artifacts")
-    input_artifacts: List[ArtifactResponse] = Field(default_factory=list, description="Input artifacts (includes internal _code.py, _input.json)")
+    input_artifacts: List[ArtifactResponse] = Field(
+        default_factory=list,
+        description="Input artifacts (includes internal _code.py, _input.json)",
+    )
 
     # Resource tracking
-    resource_usage: Optional[ResourceUsageResponse] = Field(default=None, description="Resource consumption metrics")
+    resource_usage: Optional[ResourceUsageResponse] = Field(
+        default=None, description="Resource consumption metrics"
+    )
 
     # Content hashes (for replay verification)
     code_hash: Optional[str] = Field(default=None, description="SHA256 hash of submitted code")
     input_hash: Optional[str] = Field(default=None, description="SHA256 hash of input_data")
 
     # Lineage
-    parent_execution_id: Optional[str] = Field(default=None, description="Parent execution ID (for rerun/fork)")
-    relationship: Optional[RelationshipType] = Field(default=None, description="Relationship to parent: 'rerun' or 'fork'")
+    parent_execution_id: Optional[str] = Field(
+        default=None, description="Parent execution ID (for rerun/fork)"
+    )
+    relationship: Optional[RelationshipType] = Field(
+        default=None, description="Relationship to parent: 'rerun' or 'fork'"
+    )
 
     # Truncation flags
     stdout_truncated: bool = Field(default=False, description="Whether stdout was truncated")
     stderr_truncated: bool = Field(default=False, description="Whether stderr was truncated")
 
     # Idempotency
-    idempotency_key: Optional[str] = Field(default=None, description="Client-provided idempotency key")
+    idempotency_key: Optional[str] = Field(
+        default=None, description="Client-provided idempotency key"
+    )
 
     @classmethod
-    def from_record(cls, record: ExecutionRecord) -> 'ExecutionRecordFullResponse':
+    def from_record(cls, record: ExecutionRecord) -> "ExecutionRecordFullResponse":
         """Create full response from ExecutionRecord."""
         return cls(
             # Base fields
@@ -553,7 +609,9 @@ class ExecutionRecordFullResponse(ExecutionRecordResponse):
                 max_rss_mb=record.resource_usage.max_rss_mb,
                 cpu_time_ms=record.resource_usage.cpu_time_ms,
                 wall_time_ms=record.resource_usage.wall_time_ms,
-            ) if record.resource_usage else None,
+            )
+            if record.resource_usage
+            else None,
             code_hash=record.code_hash or None,
             input_hash=record.input_hash or None,
             parent_execution_id=record.parent_execution_id,
@@ -609,7 +667,7 @@ async def health_check():
         circuit_breaker=CircuitBreakerStatus(**cb_status),
         version="2.0.0",
         production_mode=state.config.production_mode,
-        queue_stats=QueueStatsResponse(**queue_stats)
+        queue_stats=QueueStatsResponse(**queue_stats),
     )
 
 
@@ -662,7 +720,7 @@ async def execute_code(request: ExecuteRequest):
             stderr=result.get("stderr", ""),
             exit_code=result.get("exit_code"),
             error=result.get("error"),
-            job_type=result.get("job_type")
+            job_type=result.get("job_type"),
         )
 
     except Exception as e:
@@ -722,18 +780,17 @@ async def _submit_async_job(request: ExecuteRequest, http_request: Request) -> A
                 request.code, request.input_data, request.job_type, request.timeout
             )
 
-            if existing.idempotency_fingerprint and expected_fingerprint != existing.idempotency_fingerprint:
+            if (
+                existing.idempotency_fingerprint
+                and expected_fingerprint != existing.idempotency_fingerprint
+            ):
                 raise HTTPException(
-                    status_code=409,
-                    detail="Idempotency key reused with different payload"
+                    status_code=409, detail="Idempotency key reused with different payload"
                 )
 
             # Return existing job
             logger.info(f"Idempotency hit: returning existing job {existing.execution_id}")
-            return AsyncExecuteResponse(
-                job_id=existing.execution_id,
-                status=existing.status
-            )
+            return AsyncExecuteResponse(job_id=existing.execution_id, status=existing.status)
 
     # Include correlation ID in job data for tracing
     correlation_id = get_correlation_id()
@@ -761,8 +818,7 @@ async def _submit_async_job(request: ExecuteRequest, http_request: Request) -> A
         job_data["requirements"] = request.requirements
 
     job_id = await state.worker_pool.submit(
-        job_data=job_data,
-        client_ip=http_request.client.host if http_request.client else None
+        job_data=job_data, client_ip=http_request.client.host if http_request.client else None
     )
 
     logger.info(f"Job {job_id} queued (correlation_id={correlation_id})")
@@ -792,8 +848,12 @@ async def get_job_status(job_id: str):
 async def get_job_result(
     job_id: str,
     wait: bool = False,
-    timeout: float = Query(default=30.0, ge=1.0, le=MAX_WAIT_TIMEOUT, description="Max wait time in seconds (1-300)"),
-    view: Optional[str] = Query(default=None, description="Use 'full' for extended response with artifacts, hashes, lineage")
+    timeout: float = Query(
+        default=30.0, ge=1.0, le=MAX_WAIT_TIMEOUT, description="Max wait time in seconds (1-300)"
+    ),
+    view: Optional[str] = Query(
+        default=None, description="Use 'full' for extended response with artifacts, hashes, lineage"
+    ),
 ):
     """
     Get result of an async job.
@@ -815,16 +875,16 @@ async def get_job_result(
             if not record:
                 # Check if still in queue
                 status = await state.worker_pool.get_job_status(job_id)
-                if status and status.get('status') in ('pending', 'running'):
+                if status and status.get("status") in ("pending", "running"):
                     # Return 200 with job status instead of 202
                     return JSONResponse(
                         status_code=200,
                         content={
                             "job_id": job_id,
-                            "status": status.get('status'),
+                            "status": status.get("status"),
                             "message": "Job still in progress",
-                            "queue_position": status.get('queue_position'),
-                        }
+                            "queue_position": status.get("queue_position"),
+                        },
                     )
                 raise HTTPException(status_code=404, detail="Job not found")
 
@@ -851,10 +911,7 @@ async def cancel_job(job_id: str):
     """
     success = await state.worker_pool.cancel(job_id)
     if not success:
-        raise HTTPException(
-            status_code=404,
-            detail="Job not found or already completed"
-        )
+        raise HTTPException(status_code=404, detail="Job not found or already completed")
 
     return CancelResponse(status="cancelled", job_id=job_id)
 
@@ -950,8 +1007,7 @@ async def rerun_job(job_id: str, request: RerunRequest, http_request: Request):
         job_data["timeout"] = request.timeout
 
     new_job_id = await state.worker_pool.submit(
-        job_data=job_data,
-        client_ip=http_request.client.host if http_request.client else None
+        job_data=job_data, client_ip=http_request.client.host if http_request.client else None
     )
 
     logger.info(f"Job {new_job_id} created as rerun of {job_id}")
@@ -1003,8 +1059,7 @@ async def fork_job(job_id: str, request: ForkRequest, http_request: Request):
         job_data["timeout"] = request.timeout
 
     new_job_id = await state.worker_pool.submit(
-        job_data=job_data,
-        client_ip=http_request.client.host if http_request.client else None
+        job_data=job_data, client_ip=http_request.client.host if http_request.client else None
     )
 
     logger.info(f"Job {new_job_id} created as fork of {job_id}")
@@ -1048,7 +1103,7 @@ async def download_artifact(job_id: str, artifact_name: str):
         path=artifact_path,
         media_type=artifact.content_type or "application/octet-stream",
         filename=artifact_name,
-        headers={"ETag": f'"{artifact.sha256}"'}
+        headers={"ETag": f'"{artifact.sha256}"'},
     )
 
 
@@ -1078,17 +1133,23 @@ async def artifact_metadata(job_id: str, artifact_name: str):
             "Content-Length": str(artifact.size_bytes),
             "Content-Type": artifact.content_type or "application/octet-stream",
             "ETag": f'"{artifact.sha256}"',
-        }
+        },
     )
 
 
 @app.get("/executions", response_model=PaginatedResponse)
 async def list_executions(
-    status: Optional[str] = Query(default=None, description="Filter by status (e.g., 'succeeded', 'failed')"),
+    status: Optional[str] = Query(
+        default=None, description="Filter by status (e.g., 'succeeded', 'failed')"
+    ),
     job_type: Optional[str] = Query(default=None, description="Filter by job type name"),
-    limit: int = Query(default=100, ge=1, le=1000, description="Maximum records to return (1-1000)"),
+    limit: int = Query(
+        default=100, ge=1, le=1000, description="Maximum records to return (1-1000)"
+    ),
     offset: int = Query(default=0, ge=0, description="Number of records to skip for pagination"),
-    view: Optional[str] = Query(default=None, description="Use 'full' for extended response with artifacts, hashes, lineage")
+    view: Optional[str] = Query(
+        default=None, description="Use 'full' for extended response with artifacts, hashes, lineage"
+    ),
 ):
     """
     List execution records with pagination.
@@ -1101,7 +1162,7 @@ async def list_executions(
         status=status,
         job_type=job_type,
         limit=actual_limit + 1,  # Fetch one extra to check has_more
-        offset=offset
+        offset=offset,
     )
 
     has_more = len(records) > actual_limit
@@ -1125,7 +1186,9 @@ async def list_executions(
 @app.get("/executions/{execution_id}")
 async def get_execution(
     execution_id: str,
-    view: Optional[str] = Query(default=None, description="Use 'full' for extended response with artifacts, hashes, lineage")
+    view: Optional[str] = Query(
+        default=None, description="Use 'full' for extended response with artifacts, hashes, lineage"
+    ),
 ):
     """
     Get a specific execution record.
@@ -1156,19 +1219,22 @@ async def list_job_types():
         List of job type configurations with image availability status
     """
     from tako_vm.execution.builder import ContainerBuilder
+
     builder = ContainerBuilder()
 
     result = []
     for jt in state.registry.list():
-        result.append(JobTypeResponse(
-            name=jt.name,
-            requirements=jt.requirements,
-            python_version=jt.python_version,
-            memory_limit=jt.memory_limit,
-            cpu_limit=jt.cpu_limit,
-            timeout=jt.timeout,
-            image_exists=builder.image_exists(jt)
-        ))
+        result.append(
+            JobTypeResponse(
+                name=jt.name,
+                requirements=jt.requirements,
+                python_version=jt.python_version,
+                memory_limit=jt.memory_limit,
+                cpu_limit=jt.cpu_limit,
+                timeout=jt.timeout,
+                image_exists=builder.image_exists(jt),
+            )
+        )
     return result
 
 
@@ -1197,7 +1263,7 @@ async def get_job_type(name: str):
         memory_limit=jt.memory_limit,
         cpu_limit=jt.cpu_limit,
         timeout=jt.timeout,
-        image_exists=builder.image_exists(jt)
+        image_exists=builder.image_exists(jt),
     )
 
 
@@ -1227,10 +1293,7 @@ async def build_job_type(name: str, version_tag: Optional[str] = None):
         # Register version
         version_manager = VersionManager(state.storage)
         version = version_manager.register_version(
-            job_type=jt,
-            image_ref=jt.image_name,
-            version_tag=version_tag,
-            built_by="manual"
+            job_type=jt, image_ref=jt.image_name, version_tag=version_tag, built_by="manual"
         )
 
         return BuildResponse(
@@ -1238,12 +1301,14 @@ async def build_job_type(name: str, version_tag: Optional[str] = None):
             job_type=name,
             version=version.full_ref,
             digest=version.short_digest,
-            image_ref=version.image_ref
+            image_ref=version.image_ref,
         )
 
     except Exception as e:
         logger.error("Build failed for %s: %s", name, e)
-        raise HTTPException(status_code=500, detail=f"Build failed: {sanitize_error(str(e))}") from e
+        raise HTTPException(
+            status_code=500, detail=f"Build failed: {sanitize_error(str(e))}"
+        ) from e
 
 
 @app.get("/pool/stats", response_model=PoolStatsResponse)
@@ -1268,9 +1333,13 @@ async def get_dlq_stats():
 
 @app.get("/dlq", response_model=PaginatedResponse)
 async def list_dlq_entries(
-    error_type: Optional[str] = Query(default=None, description="Filter by error type (e.g., 'internal_error')"),
-    limit: int = Query(default=100, ge=1, le=1000, description="Maximum entries to return (1-1000)"),
-    offset: int = Query(default=0, ge=0, description="Number of entries to skip for pagination")
+    error_type: Optional[str] = Query(
+        default=None, description="Filter by error type (e.g., 'internal_error')"
+    ),
+    limit: int = Query(
+        default=100, ge=1, le=1000, description="Maximum entries to return (1-1000)"
+    ),
+    offset: int = Query(default=0, ge=0, description="Number of entries to skip for pagination"),
 ):
     """
     List dead letter queue entries with pagination.
@@ -1281,7 +1350,7 @@ async def list_dlq_entries(
     entries = state.storage.list_dlq_entries(
         error_type=error_type,
         limit=actual_limit + 1,  # Fetch one extra to check has_more
-        offset=offset
+        offset=offset,
     )
 
     has_more = len(entries) > actual_limit
@@ -1321,8 +1390,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     # Sanitize error for logging (full details only in debug logs)
     safe_error = sanitize_error(str(exc))
     logger.error(
-        "Unhandled exception (correlation_id=%s): %s",
-        correlation_id, safe_error, exc_info=True
+        "Unhandled exception (correlation_id=%s): %s", correlation_id, safe_error, exc_info=True
     )
     return JSONResponse(
         status_code=500,
@@ -1330,7 +1398,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "detail": "Internal server error",
             "correlation_id": correlation_id,
         },
-        headers={"X-Correlation-ID": correlation_id} if correlation_id else {}
+        headers={"X-Correlation-ID": correlation_id} if correlation_id else {},
     )
 
 
@@ -1348,10 +1416,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             "detail": detail,
             "correlation_id": correlation_id,
         },
-        headers={"X-Correlation-ID": correlation_id} if correlation_id else {}
+        headers={"X-Correlation-ID": correlation_id} if correlation_id else {},
     )
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

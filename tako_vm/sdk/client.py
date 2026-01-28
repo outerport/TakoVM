@@ -30,13 +30,14 @@ from typing import Any, Callable, Optional, Type, TypeVar, get_type_hints
 import requests
 
 # Type variables for generic typing
-InputT = TypeVar('InputT')
-OutputT = TypeVar('OutputT')
+InputT = TypeVar("InputT")
+OutputT = TypeVar("OutputT")
 
 
 @dataclass
 class ExecutionResult:
     """Result of a function execution."""
+
     success: bool
     output: Any
     execution_time: float
@@ -52,6 +53,7 @@ class TakoVMError(Exception):
 
 class ExecutionError(TakoVMError):
     """Raised when code execution fails."""
+
     def __init__(self, message: str, stdout: str = "", stderr: str = ""):
         super().__init__(message)
         self.stdout = stdout
@@ -79,7 +81,7 @@ class TakoVM:
             base_url: URL of the code executor API
             timeout: Default execution timeout in seconds
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.default_timeout = timeout
 
     def send(
@@ -87,7 +89,7 @@ class TakoVM:
         func: Callable[[InputT], OutputT],
         input_data: InputT,
         timeout: Optional[int] = None,
-        job_type: Optional[str] = None
+        job_type: Optional[str] = None,
     ) -> OutputT:
         """
         Execute a typed function in an isolated container.
@@ -107,20 +109,22 @@ class TakoVM:
         """
         # Validate input is a dataclass
         if not is_dataclass(input_data):
-            raise ValidationError(f"input_data must be a dataclass instance, got {type(input_data)}")
+            raise ValidationError(
+                f"input_data must be a dataclass instance, got {type(input_data)}"
+            )
 
         # Get type hints from function
         hints = get_type_hints(func)
-        if 'return' not in hints:
+        if "return" not in hints:
             raise ValidationError("Function must have a return type hint")
 
-        output_type = hints['return']
+        output_type = hints["return"]
         if not is_dataclass(output_type):
             raise ValidationError(f"Return type must be a dataclass, got {output_type}")
 
         # Get input type from first parameter
         params = list(hints.keys())
-        params.remove('return')
+        params.remove("return")
         if not params:
             raise ValidationError("Function must have at least one parameter")
 
@@ -139,9 +143,7 @@ class TakoVM:
 
         if not result.success:
             raise ExecutionError(
-                result.error or "Execution failed",
-                stdout=result.stdout,
-                stderr=result.stderr
+                result.error or "Execution failed", stdout=result.stdout, stderr=result.stderr
             )
 
         # Deserialize output
@@ -157,7 +159,7 @@ class TakoVM:
         func: Callable[[InputT], OutputT],
         input_data: InputT,
         timeout: Optional[int] = None,
-        job_type: Optional[str] = None
+        job_type: Optional[str] = None,
     ) -> ExecutionResult:
         """
         Execute a typed function and return the raw result.
@@ -166,14 +168,16 @@ class TakoVM:
         Useful when you want to handle errors yourself or inspect stdout/stderr.
         """
         if not is_dataclass(input_data):
-            raise ValidationError(f"input_data must be a dataclass instance, got {type(input_data)}")
+            raise ValidationError(
+                f"input_data must be a dataclass instance, got {type(input_data)}"
+            )
 
         hints = get_type_hints(func)
-        if 'return' not in hints:
+        if "return" not in hints:
             raise ValidationError("Function must have a return type hint")
 
-        output_type = hints['return']
-        params = [k for k in hints.keys() if k != 'return']
+        output_type = hints["return"]
+        params = [k for k in hints.keys() if k != "return"]
         input_type = hints[params[0]] if params else type(input_data)
 
         code = self._generate_code(func, input_type, output_type)
@@ -191,12 +195,7 @@ class TakoVM:
 
         return result
 
-    def _generate_code(
-        self,
-        func: Callable,
-        input_type: Type,
-        output_type: Type
-    ) -> str:
+    def _generate_code(self, func: Callable, input_type: Type, output_type: Type) -> str:
         """Generate wrapper code for execution in the sandbox."""
 
         # Get function source
@@ -208,7 +207,7 @@ class TakoVM:
         output_source = self._get_dataclass_source(output_type)
 
         # Build the wrapper code
-        code = f'''
+        code = f"""
 from dataclasses import dataclass, asdict
 import json
 
@@ -241,7 +240,7 @@ def _execute():
         json.dump(output_dict, f)
 
 _execute()
-'''
+"""
         return code.strip()
 
     def _get_dataclass_source(self, cls: Type) -> str:
@@ -271,16 +270,12 @@ _execute()
 
     def _get_type_name(self, t: Type) -> str:
         """Get a string representation of a type."""
-        if hasattr(t, '__name__'):
+        if hasattr(t, "__name__"):
             return t.__name__
         return str(t)
 
     def _execute(
-        self,
-        code: str,
-        input_data: dict,
-        timeout: Optional[int],
-        job_type: Optional[str]
+        self, code: str, input_data: dict, timeout: Optional[int], job_type: Optional[str]
     ) -> ExecutionResult:
         """Execute code via the API."""
         try:
@@ -298,11 +293,7 @@ _execute()
             # Use provided timeout or default for HTTP timeout
             http_timeout = (timeout or self.default_timeout) + 10
 
-            response = requests.post(
-                f"{self.base_url}/execute",
-                json=payload,
-                timeout=http_timeout
-            )
+            response = requests.post(f"{self.base_url}/execute", json=payload, timeout=http_timeout)
             response.raise_for_status()
             data = response.json()
 
@@ -313,7 +304,7 @@ _execute()
                 stdout=data.get("stdout", ""),
                 stderr=data.get("stderr", ""),
                 error=data.get("error"),
-                job_type=data.get("job_type")
+                job_type=data.get("job_type"),
             )
         except requests.exceptions.RequestException as e:
             return ExecutionResult(
@@ -322,7 +313,7 @@ _execute()
                 execution_time=0,
                 stdout="",
                 stderr="",
-                error=f"Request failed: {e}"
+                error=f"Request failed: {e}",
             )
 
     def health(self) -> dict:
@@ -385,7 +376,7 @@ def send(
     func: Callable[[InputT], OutputT],
     input_data: InputT,
     timeout: Optional[int] = None,
-    job_type: Optional[str] = None
+    job_type: Optional[str] = None,
 ) -> OutputT:
     """
     Execute a typed function in an isolated container.
@@ -427,7 +418,7 @@ def send_raw(
     func: Callable[[InputT], OutputT],
     input_data: InputT,
     timeout: Optional[int] = None,
-    job_type: Optional[str] = None
+    job_type: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Execute a typed function and return the raw result.

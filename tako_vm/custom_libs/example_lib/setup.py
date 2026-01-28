@@ -6,7 +6,8 @@ To build:
 
 This will create a .whl file in dist/ that can be installed in the Docker image.
 """
-from setuptools import setup, find_packages
+
+from setuptools import find_packages, setup
 
 setup(
     name="example_lib",

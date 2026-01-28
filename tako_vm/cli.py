@@ -11,8 +11,10 @@ Usage:
 
 # Suppress LibreSSL warnings on macOS before any other imports
 import warnings
+
 try:
     from urllib3.exceptions import NotOpenSSLWarning
+
     warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 except ImportError:
     pass
@@ -30,10 +32,11 @@ def main():
 
     # Global options
     parser.add_argument(
-        "--config", "-c",
+        "--config",
+        "-c",
         type=Path,
         help="Path to configuration file (overrides default search paths)",
-        metavar="FILE"
+        metavar="FILE",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -43,7 +46,9 @@ def main():
     server_parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     server_parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     server_parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
-    server_parser.add_argument("--workers", type=int, help="Number of worker processes (overrides config)")
+    server_parser.add_argument(
+        "--workers", type=int, help="Number of worker processes (overrides config)"
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Check server health")
@@ -55,13 +60,15 @@ def main():
         "config_file",
         type=Path,
         nargs="?",
-        help="Configuration file to validate (uses --config or default search if not specified)"
+        help="Configuration file to validate (uses --config or default search if not specified)",
     )
 
     # Config command
     config_parser = subparsers.add_parser("config", help="Show current configuration")
     config_parser.add_argument("--json", action="store_true", help="Output as JSON")
-    config_parser.add_argument("--show-defaults", action="store_true", help="Show all values including defaults")
+    config_parser.add_argument(
+        "--show-defaults", action="store_true", help="Show all values including defaults"
+    )
 
     # Version command
     subparsers.add_parser("version", help="Show version")
@@ -71,6 +78,7 @@ def main():
     # Set global config path if provided
     if args.config:
         from tako_vm.config import set_config_path
+
         if not args.config.exists():
             print(f"Error: Config file not found: {args.config}", file=sys.stderr)
             sys.exit(1)
@@ -95,8 +103,9 @@ def run_server(args):
     """Start the Tako VM server."""
     try:
         import uvicorn
+
+        from tako_vm.config import ConfigurationError, get_config
         from tako_vm.server.app import app
-        from tako_vm.config import get_config, ConfigurationError
     except ImportError:
         print("Error: Server dependencies not installed.")
         print("Install with: pip install tako-vm[server]")
@@ -146,13 +155,13 @@ def check_status(args):
 
 def validate_config(args):
     """Validate a configuration file."""
-    from tako_vm.config import validate_config_file, find_config_file, ConfigurationError
+    from tako_vm.config import find_config_file, validate_config_file
 
     # Determine which file to validate
     config_file = args.config_file
     if config_file is None:
         # Use --config if provided, otherwise search
-        if hasattr(args, 'config') and args.config:
+        if hasattr(args, "config") and args.config:
             config_file = args.config
         else:
             config_file = find_config_file()
@@ -177,6 +186,7 @@ def validate_config(args):
         # Show summary
         try:
             from tako_vm.config import load_config
+
             config = load_config(config_file)
             print("\nSummary:")
             print(f"  Mode: {'production' if config.production_mode else 'development'}")
@@ -186,14 +196,14 @@ def validate_config(args):
             if config.job_types:
                 for jt in config.job_types:
                     print(f"    - {jt.name}")
-        except (ImportError, ValueError, AttributeError) as e:
+        except (ImportError, ValueError, AttributeError):
             # Silently skip summary if config can't be loaded for display
             pass
 
 
 def show_config(args):
     """Show current configuration."""
-    from tako_vm.config import get_config, get_config_path, ConfigurationError
+    from tako_vm.config import ConfigurationError, get_config, get_config_path
 
     try:
         config = get_config()
@@ -205,9 +215,15 @@ def show_config(args):
 
     if args.json:
         import json
+
         # Export as JSON
-        data = config.model_dump(exclude={'_resolved_data_dir',
-                                          '_resolved_database_file', '_resolved_seccomp_profile_path'})
+        data = config.model_dump(
+            exclude={
+                "_resolved_data_dir",
+                "_resolved_database_file",
+                "_resolved_seccomp_profile_path",
+            }
+        )
         print(json.dumps(data, indent=2, default=str))
     else:
         print("Tako VM Configuration")
@@ -258,7 +274,9 @@ def show_config(args):
             print("[Job Types]")
             for jt in config.job_types:
                 print(f"  - {jt.name}:")
-                print(f"      memory: {jt.memory_limit}, cpu: {jt.cpu_limit}, timeout: {jt.timeout}s")
+                print(
+                    f"      memory: {jt.memory_limit}, cpu: {jt.cpu_limit}, timeout: {jt.timeout}s"
+                )
                 if jt.requirements:
                     print(f"      requirements: {', '.join(jt.requirements)}")
 

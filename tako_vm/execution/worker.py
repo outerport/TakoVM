@@ -4,30 +4,41 @@ Core worker module for executing code in isolated Docker containers.
 Provides both legacy dict-based results and new ExecutionRecord-based results.
 """
 
-import os
 import json
+import logging
+import os
+import shutil
 import subprocess
 import tempfile
-import shutil
-from pathlib import Path
 import time
-import logging
-from typing import Any, Dict, Optional, List
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from tako_vm.job_types import JobType, JobTypeRegistry
-from tako_vm.models import (
-    ExecutionRecord, ResourceUsage, Artifact, InputArtifact, ExecutionError,
-    sha256_json, sha256_content
-)
-from tako_vm.security import (
-    cap_output, sanitize_error, classify_error, compute_file_hash,
-    validate_env_key, validate_env_value, is_safe_filename,
-    validate_pip_requirement, validate_docker_image
-)
-from tako_vm.config import get_config, TakoVMConfig
+from tako_vm.config import TakoVMConfig, get_config
 from tako_vm.execution.health import get_circuit_breaker
 from tako_vm.execution.retry import RetryConfig, RetryContext, is_transient_error
+from tako_vm.job_types import JobType, JobTypeRegistry
+from tako_vm.models import (
+    Artifact,
+    ExecutionError,
+    ExecutionRecord,
+    InputArtifact,
+    ResourceUsage,
+    sha256_content,
+    sha256_json,
+)
+from tako_vm.security import (
+    cap_output,
+    classify_error,
+    compute_file_hash,
+    is_safe_filename,
+    sanitize_error,
+    validate_docker_image,
+    validate_env_key,
+    validate_env_value,
+    validate_pip_requirement,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +72,7 @@ class CodeExecutor:
         docker_image: str = "code-executor:latest",
         default_timeout: int = 30,
         registry: Optional[JobTypeRegistry] = None,
-        config: Optional[TakoVMConfig] = None
+        config: Optional[TakoVMConfig] = None,
     ):
         """
         Initialize the executor.
@@ -92,8 +103,8 @@ class CodeExecutor:
 
         # Handle version specifier (job_type@version)
         name = job_type_name
-        if '@' in job_type_name:
-            name = job_type_name.split('@')[0]
+        if "@" in job_type_name:
+            name = job_type_name.split("@")[0]
 
         job_type = self.registry.get(name)
         if job_type is None:
@@ -189,16 +200,13 @@ class CodeExecutor:
                 shutil.rmtree(workspace)
             except Exception as cleanup_err:
                 logger.error(
-                    "Failed to cleanup workspace %s: %s. "
-                    "Manual cleanup may be required.",
-                    workspace, cleanup_err
+                    "Failed to cleanup workspace %s: %s. Manual cleanup may be required.",
+                    workspace,
+                    cleanup_err,
                 )
 
     def execute_job_with_record(
-        self,
-        job_id: str,
-        job: Dict[str, Any],
-        client_ip: Optional[str] = None
+        self, job_id: str, job: Dict[str, Any], client_ip: Optional[str] = None
     ) -> ExecutionRecord:
         """
         Execute a job and return an ExecutionRecord.
@@ -283,10 +291,12 @@ class CodeExecutor:
             # Execute in container with retry for transient failures
             start_time = time.time()
             timed_out = False
-            retry_ctx = RetryContext(RetryConfig(
-                max_attempts=self.config.max_retry_attempts,
-                base_delay=self.config.retry_base_delay
-            ))
+            retry_ctx = RetryContext(
+                RetryConfig(
+                    max_attempts=self.config.max_retry_attempts,
+                    base_delay=self.config.retry_base_delay,
+                )
+            )
 
             while retry_ctx.should_retry():
                 try:
@@ -302,11 +312,14 @@ class CodeExecutor:
                     # Check for transient Docker errors in result
                     if not result.get("success") and result.get("error"):
                         error_msg = result.get("error", "").lower()
-                        if any(pattern in error_msg for pattern in [
-                            "circuit breaker",
-                            "docker daemon",
-                            "connection refused",
-                        ]):
+                        if any(
+                            pattern in error_msg
+                            for pattern in [
+                                "circuit breaker",
+                                "docker daemon",
+                                "connection refused",
+                            ]
+                        ):
                             # Transient error, retry if possible
                             retry_ctx.record_failure(Exception(result.get("error")))
                             if retry_ctx.should_retry():
@@ -340,14 +353,8 @@ class CodeExecutor:
             record.exit_code = result.get("exit_code")
 
             # Cap and sanitize outputs
-            record.stdout = cap_output(
-                result.get("stdout", ""),
-                self.config.max_stdout_bytes
-            )
-            record.stderr = cap_output(
-                result.get("stderr", ""),
-                self.config.max_stderr_bytes
-            )
+            record.stdout = cap_output(result.get("stdout", ""), self.config.max_stdout_bytes)
+            record.stderr = cap_output(result.get("stderr", ""), self.config.max_stderr_bytes)
 
             # Resource usage
             record.resource_usage = ResourceUsage(wall_time_ms=wall_time_ms)
@@ -367,23 +374,17 @@ class CodeExecutor:
             if timed_out:
                 record.status = "timeout"
                 record.error = ExecutionError(
-                    type="timeout",
-                    message=f"Execution exceeded time limit ({timeout}s)"
+                    type="timeout", message=f"Execution exceeded time limit ({timeout}s)"
                 )
             elif result.get("exit_code") == 137:
                 record.status = "oom"
-                record.error = ExecutionError(
-                    type="oom",
-                    message="Execution exceeded memory limit"
-                )
+                record.error = ExecutionError(type="oom", message="Execution exceeded memory limit")
             elif result.get("success"):
                 record.status = "succeeded"
             else:
                 record.status = "failed"
                 error_type, error_msg = classify_error(
-                    result.get("exit_code", 1),
-                    result.get("stderr", ""),
-                    timed_out
+                    result.get("exit_code", 1), result.get("stderr", ""), timed_out
                 )
                 record.error = ExecutionError(type=error_type, message=error_msg)
 
@@ -393,10 +394,7 @@ class CodeExecutor:
             # Unexpected error
             record.status = "failed"
             record.ended_at = datetime.now(timezone.utc)
-            record.error = ExecutionError(
-                type="internal_error",
-                message=sanitize_error(str(e))
-            )
+            record.error = ExecutionError(type="internal_error", message=sanitize_error(str(e)))
             return record
 
         finally:
@@ -405,9 +403,9 @@ class CodeExecutor:
                 shutil.rmtree(workspace)
             except Exception as cleanup_err:
                 logger.error(
-                    "Failed to cleanup workspace %s: %s. "
-                    "Manual cleanup may be required.",
-                    workspace, cleanup_err
+                    "Failed to cleanup workspace %s: %s. Manual cleanup may be required.",
+                    workspace,
+                    cleanup_err,
                 )
 
     def _collect_artifacts(self, output_dir: Path, job_id: str) -> List[Artifact]:
@@ -450,12 +448,14 @@ class CodeExecutor:
 
             try:
                 file_hash = compute_file_hash(path)
-                artifacts.append(Artifact(
-                    name=path.name,
-                    size_bytes=size,
-                    sha256=file_hash,
-                    storage_key=f"runs/{job_id}/artifacts/{path.name}"
-                ))
+                artifacts.append(
+                    Artifact(
+                        name=path.name,
+                        size_bytes=size,
+                        sha256=file_hash,
+                        storage_key=f"runs/{job_id}/artifacts/{path.name}",
+                    )
+                )
                 total_size += size
             except Exception as e:
                 logger.warning("Failed to process artifact %s: %s", path.name, e)
@@ -463,10 +463,7 @@ class CodeExecutor:
         return artifacts
 
     def _store_replay_artifacts(
-        self,
-        execution_id: str,
-        code: str,
-        input_data: dict
+        self, execution_id: str, code: str, input_data: dict
     ) -> List[InputArtifact]:
         """
         Store code and input_data as internal artifacts for replay support.
@@ -493,26 +490,30 @@ class CodeExecutor:
             code_bytes = code.encode("utf-8")
             code_path = runs_dir / "_code.py"
             code_path.write_text(code, encoding="utf-8")
-            replay_artifacts.append(InputArtifact(
-                name="_code.py",
-                size_bytes=len(code_bytes),
-                sha256=sha256_content(code),
-                content_type="text/x-python",
-                storage_key=f"runs/{execution_id}/_code.py",
-            ))
+            replay_artifacts.append(
+                InputArtifact(
+                    name="_code.py",
+                    size_bytes=len(code_bytes),
+                    sha256=sha256_content(code),
+                    content_type="text/x-python",
+                    storage_key=f"runs/{execution_id}/_code.py",
+                )
+            )
 
             # Store input_data as _input.json (canonical form)
             input_json = json.dumps(input_data, sort_keys=True, separators=(",", ":"))
             input_bytes = input_json.encode("utf-8")
             input_path = runs_dir / "_input.json"
             input_path.write_text(input_json, encoding="utf-8")
-            replay_artifacts.append(InputArtifact(
-                name="_input.json",
-                size_bytes=len(input_bytes),
-                sha256=sha256_json(input_data),
-                content_type="application/json",
-                storage_key=f"runs/{execution_id}/_input.json",
-            ))
+            replay_artifacts.append(
+                InputArtifact(
+                    name="_input.json",
+                    size_bytes=len(input_bytes),
+                    sha256=sha256_json(input_data),
+                    content_type="application/json",
+                    storage_key=f"runs/{execution_id}/_input.json",
+                )
+            )
 
             logger.debug("Stored replay artifacts for execution %s", execution_id)
 
@@ -529,7 +530,7 @@ class CodeExecutor:
         output_dir: Path,
         timeout: int,
         job_type: JobType,
-        extra_requirements: Optional[List[str]] = None
+        extra_requirements: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Run Docker container with security restrictions.
@@ -553,7 +554,7 @@ class CodeExecutor:
                 "error": "Docker service unavailable (circuit breaker open)",
                 "stdout": "",
                 "stderr": "Circuit breaker is open due to repeated Docker failures. Service will retry automatically.",
-                "exit_code": -1
+                "exit_code": -1,
             }
 
         # Determine which image to use
@@ -566,7 +567,7 @@ class CodeExecutor:
                     "error": "Invalid base_image configuration",
                     "stdout": "",
                     "stderr": f"base_image '{job_type.base_image}' failed validation",
-                    "exit_code": -1
+                    "exit_code": -1,
                 }
             image_name = job_type.base_image
         else:
@@ -589,7 +590,8 @@ class CodeExecutor:
             )
 
         cmd = [
-            "docker", "run",
+            "docker",
+            "run",
             "--rm",
             "--init",  # Faster signal handling with tini
             "--read-only",
@@ -619,24 +621,24 @@ class CodeExecutor:
 
         # Resource limits from job type
         limits = self.config.container_limits
-        cmd.extend([
-            f"--memory={job_type.memory_limit}",
-            f"--memory-swap={job_type.memory_limit}",
-            f"--cpus={job_type.cpu_limit}",
-            f"--pids-limit={limits.pids_limit}",
-
-            # Configurable ulimits
-            f"--ulimit=nofile={limits.nofile_soft}:{limits.nofile_hard}",
-            f"--ulimit=nproc={limits.nproc_soft}:{limits.nproc_hard}",
-            f"--ulimit=fsize={limits.fsize}",
-
-            # Mounts
-            f"--mount=type=bind,source={code_dir.absolute()},target=/code,readonly",
-            f"--mount=type=bind,source={input_dir.absolute()},target=/input,readonly",
-            f"--mount=type=bind,source={output_dir.absolute()},target=/output",
-            # Use larger /tmp and allow exec when installing packages (packages go to /tmp/site-packages)
-            f"--tmpfs=/tmp:rw,{'exec' if has_runtime_deps else 'noexec'},nosuid,size={'300m' if has_runtime_deps else limits.tmpfs_size}",
-        ])
+        cmd.extend(
+            [
+                f"--memory={job_type.memory_limit}",
+                f"--memory-swap={job_type.memory_limit}",
+                f"--cpus={job_type.cpu_limit}",
+                f"--pids-limit={limits.pids_limit}",
+                # Configurable ulimits
+                f"--ulimit=nofile={limits.nofile_soft}:{limits.nofile_hard}",
+                f"--ulimit=nproc={limits.nproc_soft}:{limits.nproc_hard}",
+                f"--ulimit=fsize={limits.fsize}",
+                # Mounts
+                f"--mount=type=bind,source={code_dir.absolute()},target=/code,readonly",
+                f"--mount=type=bind,source={input_dir.absolute()},target=/input,readonly",
+                f"--mount=type=bind,source={output_dir.absolute()},target=/output",
+                # Use larger /tmp and allow exec when installing packages (packages go to /tmp/site-packages)
+                f"--tmpfs=/tmp:rw,{'exec' if has_runtime_deps else 'noexec'},nosuid,size={'300m' if has_runtime_deps else limits.tmpfs_size}",
+            ]
+        )
 
         # Add seccomp profile if enabled and exists
         if self.config.enable_seccomp and self.config.seccomp_profile_path:
@@ -666,7 +668,7 @@ class CodeExecutor:
                     "error": f"Too many requirements ({len(all_requirements)} > {MAX_REQUIREMENTS})",
                     "stdout": "",
                     "stderr": "Use pre-built images for jobs with many dependencies",
-                    "exit_code": -1
+                    "exit_code": -1,
                 }
 
             validated_reqs = []
@@ -684,11 +686,7 @@ class CodeExecutor:
 
         try:
             result = subprocess.run(
-                cmd,
-                timeout=timeout,
-                capture_output=True,
-                text=True,
-                check=False
+                cmd, timeout=timeout, capture_output=True, text=True, check=False
             )
 
             # Record success with circuit breaker
@@ -698,7 +696,7 @@ class CodeExecutor:
                 "success": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "exit_code": result.returncode
+                "exit_code": result.returncode,
             }
 
         except subprocess.TimeoutExpired:
@@ -709,7 +707,7 @@ class CodeExecutor:
                 "stdout": "",
                 "stderr": "",
                 "exit_code": -1,
-                "timeout": timeout
+                "timeout": timeout,
             }
         except FileNotFoundError:
             # Docker command not found - record failure
@@ -719,7 +717,7 @@ class CodeExecutor:
                 "error": "Docker command not found",
                 "stdout": "",
                 "stderr": "",
-                "exit_code": -1
+                "exit_code": -1,
             }
         except Exception as e:
             # Other errors might be Docker-related
@@ -732,7 +730,7 @@ class CodeExecutor:
                 "error": sanitize_error(str(e)),
                 "stdout": "",
                 "stderr": "",
-                "exit_code": -1
+                "exit_code": -1,
             }
 
 
@@ -758,7 +756,7 @@ with open('/output/result.json', 'w') as f:
 
 print("Processing complete!")
 """,
-        "input_data": {"a": 1, "b": 2, "c": 3}
+        "input_data": {"a": 1, "b": 2, "c": 3},
     }
 
     result = executor.execute_job(job)

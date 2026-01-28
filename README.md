@@ -429,6 +429,34 @@ Tako VM uses a hardened seccomp profile ([tako_vm/seccomp_profile.json](tako_vm/
 
 The profile allows ~200 syscalls required for normal Python execution (file I/O, networking, memory management, signals) while blocking privileged operations. This defense-in-depth approach complements Docker's other isolation mechanisms.
 
+### Security Considerations
+
+**What Tako VM protects against:**
+- ✅ **Container escape** - Docker namespace isolation + seccomp profile
+- ✅ **Resource exhaustion** - Memory, CPU, file size limits enforced
+- ✅ **API-level path traversal** - Strong path validation on artifact downloads
+- ✅ **Privilege escalation** - Non-root user + capability dropping + no-new-privileges
+
+**What user code has access to (by design):**
+- ⚠️ **Its own environment** - Configuration passed via env vars or files
+- ⚠️ **Process metadata** - Can read `/proc/self/` (standard Linux behavior)
+- ⚠️ **Input data** - Full access to `/input/` directory
+- ⚠️ **Output writes** - Full write access to `/output/`
+
+**This is expected behavior.** If code needs an API key to call an API, it will have access to that key. The question is not "can code access secrets?" but "should secrets be passed in job submission?"
+
+**Recommended security practices:**
+- ✅ **For your own code:** Current isolation is strong, env vars are fine
+- ✅ **For user-submitted code:** Add rate limiting and audit logging
+- ✅ **For untrusted/AI code:** Use external secret manager (AWS Secrets Manager, Vault), don't pass secrets in job submission
+
+**Advanced isolation options:**
+- **AppArmor/SELinux** (Linux only) - Can block `/proc` reads if needed
+- **gVisor** - User-space kernel for stronger isolation (~50ms overhead)
+- **Kata Containers** - VM-level isolation for multi-tenant deployments
+
+See [docs/security/honest-assessment.md](docs/security/honest-assessment.md) for detailed threat model analysis.
+
 ## Project Structure
 
 ```

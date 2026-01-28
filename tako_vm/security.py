@@ -4,9 +4,9 @@ Security utilities for Tako VM.
 Provides output capping, error sanitization, and artifact validation.
 """
 
+import hashlib
 import logging
 import re
-import hashlib
 from pathlib import Path
 from typing import List, Tuple
 
@@ -15,24 +15,20 @@ logger = logging.getLogger(__name__)
 # Patterns to sanitize from error messages (pattern, replacement)
 SANITIZE_PATTERNS: List[Tuple[str, str]] = [
     # Temp directories
-    (r'/tmp/job-[a-zA-Z0-9_-]+', '/tmp/job-***'),
-    (r'/var/folders/[^\s]+', '/var/folders/***'),
-
+    (r"/tmp/job-[a-zA-Z0-9_-]+", "/tmp/job-***"),
+    (r"/var/folders/[^\s]+", "/var/folders/***"),
     # User home directories
-    (r'/Users/[^/\s]+', '/home/***'),
-    (r'/home/[^/\s]+', '/home/***'),
-
+    (r"/Users/[^/\s]+", "/home/***"),
+    (r"/home/[^/\s]+", "/home/***"),
     # Container internal paths that might leak info
-    (r'/app/[^\s]+', '/app/***'),
-
+    (r"/app/[^\s]+", "/app/***"),
     # IP addresses (internal)
-    (r'172\.\d+\.\d+\.\d+', '172.***.***'),
-    (r'10\.\d+\.\d+\.\d+', '10.***.***'),
-    (r'192\.168\.\d+\.\d+', '192.168.***.***'),
-
+    (r"172\.\d+\.\d+\.\d+", "172.***.***"),
+    (r"10\.\d+\.\d+\.\d+", "10.***.***"),
+    (r"192\.168\.\d+\.\d+", "192.168.***.***"),
     # Docker container IDs
-    (r'[a-f0-9]{64}', '<container-id>'),
-    (r'[a-f0-9]{12}(?![a-f0-9])', '<container-id>'),
+    (r"[a-f0-9]{64}", "<container-id>"),
+    (r"[a-f0-9]{12}(?![a-f0-9])", "<container-id>"),
 ]
 
 # Default limits
@@ -84,13 +80,13 @@ def cap_output(output: str, max_bytes: int = DEFAULT_MAX_STDOUT_BYTES) -> str:
     if not output:
         return ""
 
-    encoded = output.encode('utf-8', errors='replace')
+    encoded = output.encode("utf-8", errors="replace")
     if len(encoded) <= max_bytes:
         return output
 
     # Leave room for truncation message
     truncation_msg = f"\n\n[TRUNCATED: output exceeded {max_bytes} bytes]"
-    truncation_bytes = len(truncation_msg.encode('utf-8'))
+    truncation_bytes = len(truncation_msg.encode("utf-8"))
     available_bytes = max_bytes - truncation_bytes
 
     if available_bytes <= 0:
@@ -102,7 +98,7 @@ def cap_output(output: str, max_bytes: int = DEFAULT_MAX_STDOUT_BYTES) -> str:
     # Find last valid UTF-8 boundary
     while truncated_bytes:
         try:
-            truncated = truncated_bytes.decode('utf-8')
+            truncated = truncated_bytes.decode("utf-8")
             break
         except UnicodeDecodeError:
             truncated_bytes = truncated_bytes[:-1]
@@ -113,8 +109,7 @@ def cap_output(output: str, max_bytes: int = DEFAULT_MAX_STDOUT_BYTES) -> str:
 
 
 def validate_artifact_size(
-    path: Path,
-    max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
+    path: Path, max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
 ) -> Tuple[bool, int]:
     """
     Validate artifact is within size limit.
@@ -144,8 +139,8 @@ def compute_file_hash(path: Path) -> str:
         Hex-encoded SHA256 hash
     """
     sha256 = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest()
 
@@ -160,14 +155,10 @@ def compute_content_hash(content: str) -> str:
     Returns:
         Hex-encoded SHA256 hash
     """
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def classify_error(
-    exit_code: int,
-    stderr: str,
-    timed_out: bool = False
-) -> Tuple[str, str]:
+def classify_error(exit_code: int, stderr: str, timed_out: bool = False) -> Tuple[str, str]:
     """
     Classify error type from execution results.
 
@@ -270,7 +261,9 @@ def classify_error(
 
     # Name errors
     if "nameerror" in stderr_lower:
-        return "name_error", sanitize_error(stderr[:200] if stderr else "Name error (undefined variable)")
+        return "name_error", sanitize_error(
+            stderr[:200] if stderr else "Name error (undefined variable)"
+        )
 
     # File errors
     if "filenotfounderror" in stderr_lower:
@@ -303,7 +296,11 @@ def classify_error(
         return "overflow_error", "Numeric overflow"
 
     # Unicode errors
-    if "unicodeerror" in stderr_lower or "unicodedecodeerror" in stderr_lower or "unicodeencodeerror" in stderr_lower:
+    if (
+        "unicodeerror" in stderr_lower
+        or "unicodedecodeerror" in stderr_lower
+        or "unicodeencodeerror" in stderr_lower
+    ):
         return "encoding_error", "Unicode encoding/decoding error"
 
     # JSON errors
@@ -346,25 +343,25 @@ def is_safe_filename(filename: str) -> bool:
         return False
 
     # No path separators
-    if '/' in filename or '\\' in filename:
+    if "/" in filename or "\\" in filename:
         return False
 
     # No parent directory references
-    if filename == '..' or filename.startswith('..'):
+    if filename == ".." or filename.startswith(".."):
         return False
 
     # No hidden files (optional, can be relaxed)
-    if filename.startswith('.'):
+    if filename.startswith("."):
         return False
 
     return True
 
 
 # Pattern for valid environment variable names (POSIX)
-_ENV_KEY_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Characters that could be dangerous in Docker env values
-_DANGEROUS_ENV_CHARS = re.compile(r'[\x00-\x1f\x7f`$\\]')
+_DANGEROUS_ENV_CHARS = re.compile(r"[\x00-\x1f\x7f`$\\]")
 
 
 def validate_env_key(key: str) -> bool:
@@ -409,12 +406,12 @@ def validate_env_value(value: str) -> bool:
 # Name: alphanumeric, dash, underscore, period, forward slash
 # Tag: alphanumeric, dash, underscore, period
 _DOCKER_IMAGE_PATTERN = re.compile(
-    r'^'
-    r'(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*(?::\d+)?)/)?'  # Optional registry
-    r'(?P<name>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9]|[a-zA-Z0-9])'  # Image name
-    r'(?::(?P<tag>[a-zA-Z0-9][-a-zA-Z0-9._]{0,127}))?'  # Optional tag
-    r'(?:@sha256:(?P<digest>[a-f0-9]{64}))?'  # Optional digest
-    r'$'
+    r"^"
+    r"(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*(?::\d+)?)/)?"  # Optional registry
+    r"(?P<name>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9]|[a-zA-Z0-9])"  # Image name
+    r"(?::(?P<tag>[a-zA-Z0-9][-a-zA-Z0-9._]{0,127}))?"  # Optional tag
+    r"(?:@sha256:(?P<digest>[a-f0-9]{64}))?"  # Optional digest
+    r"$"
 )
 
 
@@ -435,10 +432,15 @@ def validate_docker_image(image: str) -> bool:
 
     # Reject dangerous patterns that could be used for injection
     dangerous_patterns = [
-        '\n', '\r',  # Newlines could inject additional Dockerfile commands
-        '`', '$', '\\',  # Shell injection
-        '#',  # Comments
-        ';', '&&', '||',  # Command chaining
+        "\n",
+        "\r",  # Newlines could inject additional Dockerfile commands
+        "`",
+        "$",
+        "\\",  # Shell injection
+        "#",  # Comments
+        ";",
+        "&&",
+        "||",  # Command chaining
     ]
     for pattern in dangerous_patterns:
         if pattern in image:
@@ -448,7 +450,7 @@ def validate_docker_image(image: str) -> bool:
 
 
 # Pattern for valid Python versions
-_PYTHON_VERSION_PATTERN = re.compile(r'^3\.(?:[89]|1[0-9])$')
+_PYTHON_VERSION_PATTERN = re.compile(r"^3\.(?:[89]|1[0-9])$")
 
 
 def validate_python_version(version: str) -> bool:
@@ -471,10 +473,10 @@ def validate_python_version(version: str) -> bool:
 # Pattern for pip package specifier (simplified PEP 508)
 # Allows: package-name, package_name, package[extra], package>=1.0, etc.
 _PIP_PACKAGE_PATTERN = re.compile(
-    r'^[a-zA-Z0-9][-a-zA-Z0-9._]*'  # Package name
-    r'(?:\[[a-zA-Z0-9][-a-zA-Z0-9,._]*\])?'  # Optional extras
-    r'(?:[<>=!~]+[a-zA-Z0-9.*+!-]+(?:,[<>=!~]+[a-zA-Z0-9.*+!-]+)*)?'  # Optional version
-    r'$'
+    r"^[a-zA-Z0-9][-a-zA-Z0-9._]*"  # Package name
+    r"(?:\[[a-zA-Z0-9][-a-zA-Z0-9,._]*\])?"  # Optional extras
+    r"(?:[<>=!~]+[a-zA-Z0-9.*+!-]+(?:,[<>=!~]+[a-zA-Z0-9.*+!-]+)*)?"  # Optional version
+    r"$"
 )
 
 
@@ -495,12 +497,17 @@ def validate_pip_requirement(requirement: str) -> bool:
 
     # Reject dangerous patterns
     dangerous_patterns = [
-        '\n', '\r',  # Newlines
-        '`', '$', '\\',  # Shell injection
-        '#',  # Comments
-        ';', '&&', '||',  # Command chaining
-        '/',  # Path separators (could be URLs or local paths)
-        '@',  # URL specifiers
+        "\n",
+        "\r",  # Newlines
+        "`",
+        "$",
+        "\\",  # Shell injection
+        "#",  # Comments
+        ";",
+        "&&",
+        "||",  # Command chaining
+        "/",  # Path separators (could be URLs or local paths)
+        "@",  # URL specifiers
     ]
     for pattern in dangerous_patterns:
         if pattern in requirement:

@@ -7,13 +7,13 @@ semantic version tags.
 
 import hashlib
 import json
-import subprocess
 import logging
-from typing import Optional, Tuple
+import subprocess
 from datetime import datetime, timezone
+from typing import Optional, Tuple
 
-from .models import JobVersion
 from .job_types import JobType
+from .models import JobVersion
 from .storage import ExecutionStorage
 
 logger = logging.getLogger(__name__)
@@ -49,20 +49,23 @@ class VersionManager:
         Returns:
             SHA256 hex digest
         """
-        content = json.dumps({
-            'name': job_type.name,
-            'requirements': sorted(job_type.requirements),
-            'python_version': job_type.python_version,
-            'base_image': job_type.base_image,
-            'environment': dict(sorted(job_type.environment.items())),
-            'shared_code': sorted(job_type.shared_code),
-        }, sort_keys=True)
+        content = json.dumps(
+            {
+                "name": job_type.name,
+                "requirements": sorted(job_type.requirements),
+                "python_version": job_type.python_version,
+                "base_image": job_type.base_image,
+                "environment": dict(sorted(job_type.environment.items())),
+                "shared_code": sorted(job_type.shared_code),
+            },
+            sort_keys=True,
+        )
 
         return hashlib.sha256(content.encode()).hexdigest()
 
     def compute_requirements_hash(self, job_type: JobType) -> str:
         """Compute hash of requirements list."""
-        content = '\n'.join(sorted(job_type.requirements))
+        content = "\n".join(sorted(job_type.requirements))
         return hashlib.sha256(content.encode()).hexdigest()
 
     def register_version(
@@ -71,7 +74,7 @@ class VersionManager:
         image_ref: str,
         version_tag: Optional[str] = None,
         built_by: Optional[str] = None,
-        dockerfile_content: Optional[str] = None
+        dockerfile_content: Optional[str] = None,
     ) -> JobVersion:
         """
         Register a built version.
@@ -123,14 +126,14 @@ class VersionManager:
         Returns:
             Tuple of (job_type_name, JobVersion or None)
         """
-        if '@' not in job_type_ref:
+        if "@" not in job_type_ref:
             # No version specified - get latest
             version = self.storage.get_latest_version(job_type_ref)
             return job_type_ref, version
 
-        name, version_spec = job_type_ref.split('@', 1)
+        name, version_spec = job_type_ref.split("@", 1)
 
-        if version_spec.startswith('sha256:'):
+        if version_spec.startswith("sha256:"):
             # Digest reference
             digest = version_spec[7:]  # Remove 'sha256:' prefix
             version = self.storage.get_version_by_digest(name, digest)
@@ -164,28 +167,26 @@ class VersionManager:
         """
         try:
             result = subprocess.run(
-                ['docker', 'image', 'inspect', image_name,
-                 '--format', '{{index .RepoDigests 0}}'],
+                ["docker", "image", "inspect", image_name, "--format", "{{index .RepoDigests 0}}"],
                 capture_output=True,
                 text=True,
                 timeout=10,
-                check=False
+                check=False,
             )
 
             if result.returncode == 0 and result.stdout.strip():
                 # Format: repo@sha256:digest
                 ref = result.stdout.strip()
-                if '@sha256:' in ref:
-                    return ref.split('@')[1]  # Return sha256:...
+                if "@sha256:" in ref:
+                    return ref.split("@")[1]  # Return sha256:...
 
             # Try getting ID as fallback
             result = subprocess.run(
-                ['docker', 'image', 'inspect', image_name,
-                 '--format', '{{.Id}}'],
+                ["docker", "image", "inspect", image_name, "--format", "{{.Id}}"],
                 capture_output=True,
                 text=True,
                 timeout=10,
-                check=False
+                check=False,
             )
 
             if result.returncode == 0:
@@ -221,7 +222,7 @@ class VersionManager:
         Returns:
             True if version exists
         """
-        if version_spec.startswith('sha256:'):
+        if version_spec.startswith("sha256:"):
             digest = version_spec[7:]
             return self.storage.get_version_by_digest(job_type_name, digest) is not None
         else:
@@ -238,8 +239,8 @@ def parse_job_type_ref(job_type_ref: str) -> Tuple[str, Optional[str]]:
     Returns:
         Tuple of (name, version_spec or None)
     """
-    if '@' not in job_type_ref:
+    if "@" not in job_type_ref:
         return job_type_ref, None
 
-    parts = job_type_ref.split('@', 1)
+    parts = job_type_ref.split("@", 1)
     return parts[0], parts[1]

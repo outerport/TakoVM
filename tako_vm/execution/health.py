@@ -6,21 +6,22 @@ Provides:
 - Orphaned container cleanup on startup
 """
 
-import subprocess
-import time
-import threading
 import logging
+import subprocess
+import threading
+import time
 from dataclasses import dataclass
-from typing import Optional
 from enum import Enum
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 class CircuitState(Enum):
     """Circuit breaker states."""
-    CLOSED = "closed"      # Normal operation, requests pass through
-    OPEN = "open"          # Failing, reject requests immediately
+
+    CLOSED = "closed"  # Normal operation, requests pass through
+    OPEN = "open"  # Failing, reject requests immediately
     HALF_OPEN = "half_open"  # Testing if service recovered
 
 
@@ -121,9 +122,7 @@ class DockerCircuitBreaker:
             elif self._state == CircuitState.CLOSED:
                 if self._failure_count >= self.config.failure_threshold:
                     self._state = CircuitState.OPEN
-                    logger.error(
-                        f"Circuit breaker opened after {self._failure_count} failures"
-                    )
+                    logger.error(f"Circuit breaker opened after {self._failure_count} failures")
 
     def check_docker_health(self) -> bool:
         """
@@ -134,10 +133,7 @@ class DockerCircuitBreaker:
         """
         try:
             result = subprocess.run(
-                ["docker", "info"],
-                capture_output=True,
-                timeout=5.0,
-                check=False
+                ["docker", "info"], capture_output=True, timeout=5.0, check=False
             )
             healthy = result.returncode == 0
 
@@ -192,14 +188,18 @@ class DockerCleanup:
             # Find containers with our label
             result = subprocess.run(
                 [
-                    "docker", "ps", "-a",
-                    "--filter", f"label={cls.CONTAINER_LABEL}",
-                    "--format", "{{.ID}}\t{{.CreatedAt}}\t{{.Status}}"
+                    "docker",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"label={cls.CONTAINER_LABEL}",
+                    "--format",
+                    "{{.ID}}\t{{.CreatedAt}}\t{{.Status}}",
                 ],
                 capture_output=True,
                 text=True,
                 timeout=30.0,
-                check=False
+                check=False,
             )
 
             if result.returncode != 0:
@@ -208,29 +208,25 @@ class DockerCleanup:
 
             # Also find containers with our naming pattern (job-*)
             result_pattern = subprocess.run(
-                [
-                    "docker", "ps", "-a",
-                    "--filter", "name=job-",
-                    "--format", "{{.ID}}"
-                ],
+                ["docker", "ps", "-a", "--filter", "name=job-", "--format", "{{.ID}}"],
                 capture_output=True,
                 text=True,
                 timeout=30.0,
-                check=False
+                check=False,
             )
 
             containers_to_remove = set()
 
             # Parse labeled containers
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 if not line:
                     continue
-                parts = line.split('\t')
+                parts = line.split("\t")
                 if len(parts) >= 1:
                     containers_to_remove.add(parts[0])
 
             # Add pattern-matched containers
-            for container_id in result_pattern.stdout.strip().split('\n'):
+            for container_id in result_pattern.stdout.strip().split("\n"):
                 if container_id:
                     containers_to_remove.add(container_id)
 
@@ -242,7 +238,7 @@ class DockerCleanup:
                         ["docker", "rm", "-f", container_id],
                         capture_output=True,
                         timeout=10.0,
-                        check=False
+                        check=False,
                     )
                     if rm_result.returncode == 0:
                         removed += 1
@@ -276,7 +272,7 @@ class DockerCleanup:
                 capture_output=True,
                 text=True,
                 timeout=60.0,
-                check=False
+                check=False,
             )
 
             if result.returncode == 0:

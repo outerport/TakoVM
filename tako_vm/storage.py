@@ -8,13 +8,18 @@ import json
 import logging
 import sqlite3
 import threading
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
+from pathlib import Path
+from typing import List, Optional
 
 from .models import (
-    ExecutionRecord, ResourceUsage, Artifact, ExecutionError,
-    JobVersion, DeadLetterEntry, InputArtifact
+    Artifact,
+    DeadLetterEntry,
+    ExecutionError,
+    ExecutionRecord,
+    InputArtifact,
+    JobVersion,
+    ResourceUsage,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,11 +159,7 @@ class ExecutionStorage:
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create database connection."""
         if self._conn is None:
-            self._conn = sqlite3.connect(
-                str(self.db_path),
-                check_same_thread=False,
-                timeout=30.0
-            )
+            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
             self._conn.row_factory = sqlite3.Row
         return self._conn
 
@@ -184,7 +185,8 @@ class ExecutionStorage:
 
         with self._lock:
             conn = self._get_connection()
-            conn.execute("""
+            conn.execute(
+                """
             INSERT OR REPLACE INTO execution_records (
                 execution_id, status, job_type, job_ref,
                 created_at, queued_at, dequeued_at, started_at, ended_at, duration_ms,
@@ -196,42 +198,44 @@ class ExecutionStorage:
                 artifacts_json, error_json,
                 client_ip, parent_execution_id, relationship
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            record.execution_id,
-            record.status,
-            record.job_type,
-            record.job_ref,
-            record.created_at.isoformat(),
-            record.queued_at.isoformat(),
-            record.dequeued_at.isoformat() if record.dequeued_at else None,
-            record.started_at.isoformat() if record.started_at else None,
-            record.ended_at.isoformat() if record.ended_at else None,
-            record.duration_ms,
-            record.attempt,
-            record.max_attempts,
-            record.worker_id,
-            record.idempotency_key,
-            record.idempotency_fingerprint,
-            record.code_hash,
-            record.input_hash,
-            record.params_hash,
-            record.input_artifacts_hash,
-            input_artifacts_json,
-            record.exit_code,
-            record.stdout,
-            record.stderr,
-            1 if record.stdout_truncated else 0,
-            1 if record.stderr_truncated else 0,
-            result_json,
-            resource_usage.max_rss_mb if resource_usage else None,
-            resource_usage.cpu_time_ms if resource_usage else None,
-            resource_usage.wall_time_ms if resource_usage else None,
-            artifacts_json,
-            error_json,
-            record.client_ip,
-            record.parent_execution_id,
-            record.relationship,
-            ))
+        """,
+                (
+                    record.execution_id,
+                    record.status,
+                    record.job_type,
+                    record.job_ref,
+                    record.created_at.isoformat(),
+                    record.queued_at.isoformat(),
+                    record.dequeued_at.isoformat() if record.dequeued_at else None,
+                    record.started_at.isoformat() if record.started_at else None,
+                    record.ended_at.isoformat() if record.ended_at else None,
+                    record.duration_ms,
+                    record.attempt,
+                    record.max_attempts,
+                    record.worker_id,
+                    record.idempotency_key,
+                    record.idempotency_fingerprint,
+                    record.code_hash,
+                    record.input_hash,
+                    record.params_hash,
+                    record.input_artifacts_hash,
+                    input_artifacts_json,
+                    record.exit_code,
+                    record.stdout,
+                    record.stderr,
+                    1 if record.stdout_truncated else 0,
+                    1 if record.stderr_truncated else 0,
+                    result_json,
+                    resource_usage.max_rss_mb if resource_usage else None,
+                    resource_usage.cpu_time_ms if resource_usage else None,
+                    resource_usage.wall_time_ms if resource_usage else None,
+                    artifacts_json,
+                    error_json,
+                    record.client_ip,
+                    record.parent_execution_id,
+                    record.relationship,
+                ),
+            )
             conn.commit()
 
     def get_record(self, execution_id: str) -> Optional[ExecutionRecord]:
@@ -247,8 +251,7 @@ class ExecutionStorage:
         with self._lock:
             conn = self._get_connection()
             row = conn.execute(
-                "SELECT * FROM execution_records WHERE execution_id = ?",
-                (execution_id,)
+                "SELECT * FROM execution_records WHERE execution_id = ?", (execution_id,)
             ).fetchone()
 
         if not row:
@@ -269,8 +272,7 @@ class ExecutionStorage:
         with self._lock:
             conn = self._get_connection()
             row = conn.execute(
-                "SELECT * FROM execution_records WHERE idempotency_key = ?",
-                (key,)
+                "SELECT * FROM execution_records WHERE idempotency_key = ?", (key,)
             ).fetchone()
 
         if not row:
@@ -283,7 +285,7 @@ class ExecutionStorage:
         status: Optional[str] = None,
         job_type: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[ExecutionRecord]:
         """
         List execution records with optional filters.
@@ -331,10 +333,7 @@ class ExecutionStorage:
 
         with self._lock:
             conn = self._get_connection()
-            cursor = conn.execute(
-                "DELETE FROM execution_records WHERE created_at < ?",
-                (cutoff,)
-            )
+            cursor = conn.execute("DELETE FROM execution_records WHERE created_at < ?", (cutoff,))
             conn.commit()
             return cursor.rowcount
 
@@ -342,100 +341,104 @@ class ExecutionStorage:
         """Convert database row to ExecutionRecord."""
         # Parse resource usage
         resource_usage = None
-        if row['wall_time_ms'] is not None:
+        if row["wall_time_ms"] is not None:
             resource_usage = ResourceUsage(
-                max_rss_mb=row['max_rss_mb'],
-                cpu_time_ms=row['cpu_time_ms'],
-                wall_time_ms=row['wall_time_ms']
+                max_rss_mb=row["max_rss_mb"],
+                cpu_time_ms=row["cpu_time_ms"],
+                wall_time_ms=row["wall_time_ms"],
             )
 
         # Parse input artifacts with error handling
         input_artifacts = []
-        input_artifacts_json = row['input_artifacts_json'] if 'input_artifacts_json' in row.keys() else None
+        input_artifacts_json = (
+            row["input_artifacts_json"] if "input_artifacts_json" in row.keys() else None
+        )
         if input_artifacts_json:
             try:
                 input_artifacts_data = json.loads(input_artifacts_json)
                 input_artifacts = [InputArtifact(**a) for a in input_artifacts_data]
             except (json.JSONDecodeError, TypeError, ValueError) as e:
                 logger.warning(
-                    "Failed to parse input_artifacts_json for %s: %s",
-                    row['execution_id'], e
+                    "Failed to parse input_artifacts_json for %s: %s", row["execution_id"], e
                 )
 
         # Parse output artifacts with error handling
         artifacts = []
-        if row['artifacts_json']:
+        if row["artifacts_json"]:
             try:
-                artifacts_data = json.loads(row['artifacts_json'])
+                artifacts_data = json.loads(row["artifacts_json"])
                 artifacts = [Artifact(**a) for a in artifacts_data]
             except (json.JSONDecodeError, TypeError, ValueError) as e:
-                logger.warning(
-                    "Failed to parse artifacts_json for %s: %s",
-                    row['execution_id'], e
-                )
+                logger.warning("Failed to parse artifacts_json for %s: %s", row["execution_id"], e)
 
         # Parse error with error handling
         error = None
-        if row['error_json']:
+        if row["error_json"]:
             try:
-                error_data = json.loads(row['error_json'])
+                error_data = json.loads(row["error_json"])
                 error = ExecutionError(**error_data)
             except (json.JSONDecodeError, TypeError, ValueError) as e:
-                logger.warning(
-                    "Failed to parse error_json for %s: %s",
-                    row['execution_id'], e
-                )
+                logger.warning("Failed to parse error_json for %s: %s", row["execution_id"], e)
 
         # Parse result_json with error handling
         result_json = None
-        result_json_col = row['result_json'] if 'result_json' in row.keys() else row.get('output_json')
+        result_json_col = (
+            row["result_json"] if "result_json" in row.keys() else row.get("output_json")
+        )
         if result_json_col:
             try:
                 result_json = json.loads(result_json_col)
             except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(
-                    "Failed to parse result_json for %s: %s",
-                    row['execution_id'], e
-                )
+                logger.warning("Failed to parse result_json for %s: %s", row["execution_id"], e)
 
         # Handle optional new columns with defaults
-        job_ref = row['job_ref'] if 'job_ref' in row.keys() else f"{row['job_type']}@latest"
-        queued_at_str = row['queued_at'] if 'queued_at' in row.keys() else row['created_at']
-        dequeued_at_str = row['dequeued_at'] if 'dequeued_at' in row.keys() else None
+        job_ref = row["job_ref"] if "job_ref" in row.keys() else f"{row['job_type']}@latest"
+        queued_at_str = row["queued_at"] if "queued_at" in row.keys() else row["created_at"]
+        dequeued_at_str = row["dequeued_at"] if "dequeued_at" in row.keys() else None
 
         return ExecutionRecord(
-            execution_id=row['execution_id'],
-            status=row['status'],
-            job_type=row['job_type'],
+            execution_id=row["execution_id"],
+            status=row["status"],
+            job_type=row["job_type"],
             job_ref=job_ref,
-            created_at=datetime.fromisoformat(row['created_at']),
+            created_at=datetime.fromisoformat(row["created_at"]),
             queued_at=datetime.fromisoformat(queued_at_str),
             dequeued_at=datetime.fromisoformat(dequeued_at_str) if dequeued_at_str else None,
-            started_at=datetime.fromisoformat(row['started_at']) if row['started_at'] else None,
-            ended_at=datetime.fromisoformat(row['ended_at']) if row['ended_at'] else None,
-            duration_ms=row['duration_ms'],
-            attempt=row['attempt'] if 'attempt' in row.keys() else 0,
-            max_attempts=row['max_attempts'] if 'max_attempts' in row.keys() else 1,
-            worker_id=row['worker_id'] if 'worker_id' in row.keys() else None,
-            idempotency_key=row['idempotency_key'] if 'idempotency_key' in row.keys() else None,
-            idempotency_fingerprint=row['idempotency_fingerprint'] if 'idempotency_fingerprint' in row.keys() else None,
-            code_hash=row['code_hash'],
-            input_hash=row['input_hash'],
-            params_hash=row['params_hash'] if 'params_hash' in row.keys() else "",
-            input_artifacts_hash=row['input_artifacts_hash'] if 'input_artifacts_hash' in row.keys() else "",
+            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
+            duration_ms=row["duration_ms"],
+            attempt=row["attempt"] if "attempt" in row.keys() else 0,
+            max_attempts=row["max_attempts"] if "max_attempts" in row.keys() else 1,
+            worker_id=row["worker_id"] if "worker_id" in row.keys() else None,
+            idempotency_key=row["idempotency_key"] if "idempotency_key" in row.keys() else None,
+            idempotency_fingerprint=row["idempotency_fingerprint"]
+            if "idempotency_fingerprint" in row.keys()
+            else None,
+            code_hash=row["code_hash"],
+            input_hash=row["input_hash"],
+            params_hash=row["params_hash"] if "params_hash" in row.keys() else "",
+            input_artifacts_hash=row["input_artifacts_hash"]
+            if "input_artifacts_hash" in row.keys()
+            else "",
             input_artifacts=input_artifacts,
-            exit_code=row['exit_code'],
-            stdout=row['stdout'] or "",
-            stderr=row['stderr'] or "",
-            stdout_truncated=bool(row['stdout_truncated']) if 'stdout_truncated' in row.keys() else False,
-            stderr_truncated=bool(row['stderr_truncated']) if 'stderr_truncated' in row.keys() else False,
+            exit_code=row["exit_code"],
+            stdout=row["stdout"] or "",
+            stderr=row["stderr"] or "",
+            stdout_truncated=bool(row["stdout_truncated"])
+            if "stdout_truncated" in row.keys()
+            else False,
+            stderr_truncated=bool(row["stderr_truncated"])
+            if "stderr_truncated" in row.keys()
+            else False,
             result_json=result_json,
             resource_usage=resource_usage,
             artifacts=artifacts,
             error=error,
-            client_ip=row['client_ip'],
-            parent_execution_id=row['parent_execution_id'] if 'parent_execution_id' in row.keys() else None,
-            relationship=row['relationship'] if 'relationship' in row.keys() else None,
+            client_ip=row["client_ip"],
+            parent_execution_id=row["parent_execution_id"]
+            if "parent_execution_id" in row.keys()
+            else None,
+            relationship=row["relationship"] if "relationship" in row.keys() else None,
         )
 
     # Job version methods
@@ -444,29 +447,28 @@ class ExecutionStorage:
         """Save job version record."""
         with self._lock:
             conn = self._get_connection()
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO job_versions (
                     digest, job_type_name, version_tag,
                     built_at, built_by, dockerfile_hash,
                     requirements_hash, image_ref
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                version.digest,
-                version.job_type_name,
-                version.version_tag,
-                version.built_at.isoformat(),
-                version.built_by,
-                version.dockerfile_hash,
-                version.requirements_hash,
-                version.image_ref,
-            ))
+            """,
+                (
+                    version.digest,
+                    version.job_type_name,
+                    version.version_tag,
+                    version.built_at.isoformat(),
+                    version.built_by,
+                    version.dockerfile_hash,
+                    version.requirements_hash,
+                    version.image_ref,
+                ),
+            )
             conn.commit()
 
-    def get_version_by_digest(
-        self,
-        job_type_name: str,
-        digest: str
-    ) -> Optional[JobVersion]:
+    def get_version_by_digest(self, job_type_name: str, digest: str) -> Optional[JobVersion]:
         """Get version by digest."""
         with self._lock:
             conn = self._get_connection()
@@ -475,12 +477,11 @@ class ExecutionStorage:
             if len(digest) < 64:
                 row = conn.execute(
                     "SELECT * FROM job_versions WHERE job_type_name = ? AND digest LIKE ?",
-                    (job_type_name, digest + '%')
+                    (job_type_name, digest + "%"),
                 ).fetchone()
             else:
                 row = conn.execute(
-                    "SELECT * FROM job_versions WHERE digest = ?",
-                    (digest,)
+                    "SELECT * FROM job_versions WHERE digest = ?", (digest,)
                 ).fetchone()
 
         if not row:
@@ -488,17 +489,13 @@ class ExecutionStorage:
 
         return self._row_to_version(row)
 
-    def get_version_by_tag(
-        self,
-        job_type_name: str,
-        version_tag: str
-    ) -> Optional[JobVersion]:
+    def get_version_by_tag(self, job_type_name: str, version_tag: str) -> Optional[JobVersion]:
         """Get version by tag."""
         with self._lock:
             conn = self._get_connection()
             row = conn.execute(
                 "SELECT * FROM job_versions WHERE job_type_name = ? AND version_tag = ?",
-                (job_type_name, version_tag)
+                (job_type_name, version_tag),
             ).fetchone()
 
         if not row:
@@ -512,7 +509,7 @@ class ExecutionStorage:
             conn = self._get_connection()
             row = conn.execute(
                 "SELECT * FROM job_versions WHERE job_type_name = ? ORDER BY built_at DESC LIMIT 1",
-                (job_type_name,)
+                (job_type_name,),
             ).fetchone()
 
         if not row:
@@ -526,7 +523,7 @@ class ExecutionStorage:
             conn = self._get_connection()
             rows = conn.execute(
                 "SELECT * FROM job_versions WHERE job_type_name = ? ORDER BY built_at DESC",
-                (job_type_name,)
+                (job_type_name,),
             ).fetchall()
 
         return [self._row_to_version(row) for row in rows]
@@ -534,14 +531,14 @@ class ExecutionStorage:
     def _row_to_version(self, row: sqlite3.Row) -> JobVersion:
         """Convert database row to JobVersion."""
         return JobVersion(
-            digest=row['digest'],
-            job_type_name=row['job_type_name'],
-            version_tag=row['version_tag'],
-            built_at=datetime.fromisoformat(row['built_at']),
-            built_by=row['built_by'],
-            dockerfile_hash=row['dockerfile_hash'],
-            requirements_hash=row['requirements_hash'],
-            image_ref=row['image_ref'],
+            digest=row["digest"],
+            job_type_name=row["job_type_name"],
+            version_tag=row["version_tag"],
+            built_at=datetime.fromisoformat(row["built_at"]),
+            built_by=row["built_by"],
+            dockerfile_hash=row["dockerfile_hash"],
+            requirements_hash=row["requirements_hash"],
+            image_ref=row["image_ref"],
         )
 
     # Dead letter queue methods
@@ -559,21 +556,24 @@ class ExecutionStorage:
         job_data_json = json.dumps(entry.job_data)
         with self._lock:
             conn = self._get_connection()
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 INSERT INTO dead_letter_queue (
                     job_id, job_data_json, error_type, error_message,
                     retry_count, created_at, client_ip, correlation_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                entry.job_id,
-                job_data_json,
-                entry.error_type,
-                entry.error_message,
-                entry.retry_count,
-                entry.created_at.isoformat(),
-                entry.client_ip,
-                entry.correlation_id,
-            ))
+            """,
+                (
+                    entry.job_id,
+                    job_data_json,
+                    entry.error_type,
+                    entry.error_message,
+                    entry.retry_count,
+                    entry.created_at.isoformat(),
+                    entry.client_ip,
+                    entry.correlation_id,
+                ),
+            )
             conn.commit()
             return cursor.lastrowid or 0
 
@@ -582,8 +582,7 @@ class ExecutionStorage:
         with self._lock:
             conn = self._get_connection()
             row = conn.execute(
-                "SELECT * FROM dead_letter_queue WHERE id = ?",
-                (entry_id,)
+                "SELECT * FROM dead_letter_queue WHERE id = ?", (entry_id,)
             ).fetchone()
 
         if not row:
@@ -592,10 +591,7 @@ class ExecutionStorage:
         return self._row_to_dlq_entry(row)
 
     def list_dlq_entries(
-        self,
-        error_type: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0
+        self, error_type: Optional[str] = None, limit: int = 100, offset: int = 0
     ) -> List[DeadLetterEntry]:
         """
         List dead letter queue entries.
@@ -636,10 +632,7 @@ class ExecutionStorage:
         """
         with self._lock:
             conn = self._get_connection()
-            cursor = conn.execute(
-                "DELETE FROM dead_letter_queue WHERE id = ?",
-                (entry_id,)
-            )
+            cursor = conn.execute("DELETE FROM dead_letter_queue WHERE id = ?", (entry_id,))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -653,9 +646,9 @@ class ExecutionStorage:
         with self._lock:
             conn = self._get_connection()
 
-            total = conn.execute(
-                "SELECT COUNT(*) as count FROM dead_letter_queue"
-            ).fetchone()['count']
+            total = conn.execute("SELECT COUNT(*) as count FROM dead_letter_queue").fetchone()[
+                "count"
+            ]
 
             by_error = conn.execute("""
                 SELECT error_type, COUNT(*) as count
@@ -666,7 +659,7 @@ class ExecutionStorage:
 
         return {
             "total": total,
-            "by_error_type": {row['error_type']: row['count'] for row in by_error}
+            "by_error_type": {row["error_type"]: row["count"] for row in by_error},
         }
 
     def cleanup_old_dlq_entries(self, ttl_days: int) -> int:
@@ -683,10 +676,7 @@ class ExecutionStorage:
 
         with self._lock:
             conn = self._get_connection()
-            cursor = conn.execute(
-                "DELETE FROM dead_letter_queue WHERE created_at < ?",
-                (cutoff,)
-            )
+            cursor = conn.execute("DELETE FROM dead_letter_queue WHERE created_at < ?", (cutoff,))
             conn.commit()
             return cursor.rowcount
 
@@ -695,21 +685,18 @@ class ExecutionStorage:
         # Parse job_data with error handling
         job_data = {}
         try:
-            job_data = json.loads(row['job_data_json'])
+            job_data = json.loads(row["job_data_json"])
         except (json.JSONDecodeError, TypeError) as e:
-            logger.warning(
-                "Failed to parse job_data_json for DLQ entry %s: %s",
-                row['id'], e
-            )
+            logger.warning("Failed to parse job_data_json for DLQ entry %s: %s", row["id"], e)
 
         return DeadLetterEntry(
-            id=row['id'],
-            job_id=row['job_id'],
+            id=row["id"],
+            job_id=row["job_id"],
             job_data=job_data,
-            error_type=row['error_type'],
-            error_message=row['error_message'],
-            retry_count=row['retry_count'],
-            created_at=datetime.fromisoformat(row['created_at']),
-            client_ip=row['client_ip'],
-            correlation_id=row['correlation_id'],
+            error_type=row["error_type"],
+            error_message=row["error_message"],
+            retry_count=row["retry_count"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            client_ip=row["client_ip"],
+            correlation_id=row["correlation_id"],
         )

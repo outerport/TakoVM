@@ -6,6 +6,7 @@ dataclasses and execute typed functions in isolated containers.
 
 Run from project root: python examples/example_tako_vm.py
 """
+
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,10 +66,11 @@ def transform_values(input: TransformInput) -> TransformOutput:
 
 def fibonacci(input: FibInput) -> FibOutput:
     """Calculate fibonacci number and sequence."""
+
     def fib(n):
         if n <= 1:
             return n
-        return fib(n-1) + fib(n-2)
+        return fib(n - 1) + fib(n - 2)
 
     sequence = [fib(i) for i in range(input.n + 1)]
     return FibOutput(value=fib(input.n), sequence=sequence)
@@ -80,25 +82,22 @@ def main():
     # Example 1: Simple addition
     print("Example 1: Add two numbers")
     result = tako_vm.send(add_numbers, AddInput(x=10, y=20))
-    print(f"  Input: AddInput(x=10, y=20)")
+    print("  Input: AddInput(x=10, y=20)")
     print(f"  Output: AddOutput(result={result.result})")
     print(f"  Type: {type(result).__name__}")
     print()
 
     # Example 2: Transform values
     print("Example 2: Transform a list")
-    result = tako_vm.send(
-        transform_values,
-        TransformInput(values=[1, 2, 3, 4, 5], multiplier=3)
-    )
-    print(f"  Input: TransformInput(values=[1,2,3,4,5], multiplier=3)")
+    result = tako_vm.send(transform_values, TransformInput(values=[1, 2, 3, 4, 5], multiplier=3))
+    print("  Input: TransformInput(values=[1,2,3,4,5], multiplier=3)")
     print(f"  Output: TransformOutput(transformed={result.transformed}, count={result.count})")
     print()
 
     # Example 3: Fibonacci
     print("Example 3: Fibonacci sequence")
     result = tako_vm.send(fibonacci, FibInput(n=10))
-    print(f"  Input: FibInput(n=10)")
+    print("  Input: FibInput(n=10)")
     print(f"  Output: FibOutput(value={result.value}, sequence={result.sequence})")
     print()
 
@@ -113,6 +112,7 @@ def main():
 
     # Example 5: Error handling
     print("Example 5: Error handling")
+
     @dataclass
     class ErrorInput:
         x: int

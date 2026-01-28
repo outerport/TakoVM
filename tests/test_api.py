@@ -4,8 +4,10 @@ Integration tests for Tako VM API.
 Tests job submission, status checking, and result retrieval
 using FastAPI's TestClient (no running server required).
 """
+
 import os
 import tempfile
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -20,6 +22,7 @@ def client():
 
         # Reset config to pick up new env vars
         from tako_vm.config import reset_config
+
         reset_config()
 
         # Import app after setting env vars
@@ -52,7 +55,7 @@ class TestSyncExecution:
 
     def test_execute_simple_code(self, client):
         """Execute simple code that writes output."""
-        code = '''
+        code = """
 import json
 with open("/input/data.json") as f:
     data = json.load(f)
@@ -60,11 +63,8 @@ result = {"sum": data["a"] + data["b"]}
 with open("/output/result.json", "w") as f:
     json.dump(result, f)
 print("Done!")
-'''
-        response = client.post("/execute", json={
-            "code": code,
-            "input_data": {"a": 10, "b": 20}
-        })
+"""
+        response = client.post("/execute", json={"code": code, "input_data": {"a": 10, "b": 20}})
 
         assert response.status_code == 200
         data = response.json()
@@ -75,10 +75,7 @@ print("Done!")
 
     def test_execute_syntax_error(self, client):
         """Execute code with syntax error."""
-        response = client.post("/execute", json={
-            "code": "def broken(",
-            "input_data": {}
-        })
+        response = client.post("/execute", json={"code": "def broken(", "input_data": {}})
 
         assert response.status_code == 200
         data = response.json()
@@ -87,10 +84,7 @@ print("Done!")
 
     def test_execute_empty_code_rejected(self, client):
         """Empty code is rejected."""
-        response = client.post("/execute", json={
-            "code": "",
-            "input_data": {}
-        })
+        response = client.post("/execute", json={"code": "", "input_data": {}})
 
         assert response.status_code == 422  # Validation error
 
@@ -100,10 +94,7 @@ class TestAsyncExecution:
 
     def test_async_submit_returns_job_id(self, client):
         """Async submit returns job ID and queued status."""
-        response = client.post("/execute/async", json={
-            "code": "print('hello')",
-            "input_data": {}
-        })
+        response = client.post("/execute/async", json={"code": "print('hello')", "input_data": {}})
 
         assert response.status_code == 200
         data = response.json()
@@ -113,10 +104,9 @@ class TestAsyncExecution:
     def test_async_job_status(self, client):
         """Can check status of submitted job."""
         # Submit job
-        submit_response = client.post("/execute/async", json={
-            "code": "print('hello')",
-            "input_data": {}
-        })
+        submit_response = client.post(
+            "/execute/async", json={"code": "print('hello')", "input_data": {}}
+        )
         job_id = submit_response.json()["job_id"]
 
         # Check status
@@ -128,23 +118,17 @@ class TestAsyncExecution:
 
     def test_async_job_result_wait(self, client):
         """Can wait for and retrieve job result."""
-        code = '''
+        code = """
 import json
 with open("/output/result.json", "w") as f:
     json.dump({"message": "async complete"}, f)
-'''
+"""
         # Submit job
-        submit_response = client.post("/execute/async", json={
-            "code": code,
-            "input_data": {}
-        })
+        submit_response = client.post("/execute/async", json={"code": code, "input_data": {}})
         job_id = submit_response.json()["job_id"]
 
         # Wait for result
-        result_response = client.get(
-            f"/jobs/{job_id}/result",
-            params={"wait": True, "timeout": 60}
-        )
+        result_response = client.get(f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60})
 
         assert result_response.status_code == 200
         data = result_response.json()
@@ -204,10 +188,7 @@ class TestExecutionRecords:
 
     def test_list_executions_with_filters(self, client):
         """Can filter execution records."""
-        response = client.get("/executions", params={
-            "status": "succeeded",
-            "limit": 10
-        })
+        response = client.get("/executions", params={"status": "succeeded", "limit": 10})
         assert response.status_code == 200
 
 

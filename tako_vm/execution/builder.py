@@ -24,8 +24,11 @@ from typing import Optional
 
 from tako_vm.job_types import JobType, JobTypeRegistry
 from tako_vm.security import (
-    validate_env_key, validate_env_value,
-    validate_docker_image, validate_python_version, validate_pip_requirement
+    validate_docker_image,
+    validate_env_key,
+    validate_env_value,
+    validate_pip_requirement,
+    validate_python_version,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +89,8 @@ class ContainerBuilder:
                 if not validate_pip_requirement(req):
                     logger.warning(
                         "Skipping invalid pip requirement in Dockerfile for %s: %s",
-                        job_type.name, req
+                        job_type.name,
+                        req,
                     )
                     continue
                 validated_reqs.append(req)
@@ -107,10 +111,10 @@ class ContainerBuilder:
                     logger.warning("Skipping env with unsafe value in Dockerfile: %s", key)
                     continue
                 # Escape quotes and backslashes in value for Dockerfile
-                escaped_value = value.replace('\\', '\\\\').replace('"', '\\"')
+                escaped_value = value.replace("\\", "\\\\").replace('"', '\\"')
                 env_lines += f'ENV {key}="{escaped_value}"\n'
 
-        dockerfile = f'''# Auto-generated Dockerfile for job type: {job_type.name}
+        dockerfile = f"""# Auto-generated Dockerfile for job type: {job_type.name}
 FROM {base_image}
 
 # Install uv for fast dependency installation
@@ -149,15 +153,10 @@ USER sandbox
 
 # Entry point
 CMD ["python", "-u", "/code/main.py"]
-'''
+"""
         return dockerfile
 
-    def build(
-        self,
-        job_type: JobType,
-        no_cache: bool = False,
-        quiet: bool = False
-    ) -> bool:
+    def build(self, job_type: JobType, no_cache: bool = False, quiet: bool = False) -> bool:
         """
         Build Docker image for a job type.
 
@@ -203,8 +202,7 @@ CMD ["python", "-u", "/code/main.py"]
                     src.relative_to(allowed_base)
                 except ValueError:
                     logger.warning(
-                        "Skipping shared_code path that escapes allowed directory: %s",
-                        code_path
+                        "Skipping shared_code path that escapes allowed directory: %s", code_path
                     )
                     continue
                 if src.exists():
@@ -220,26 +218,16 @@ CMD ["python", "-u", "/code/main.py"]
             cmd.append(str(build_path))
 
             try:
-                subprocess.run(
-                    cmd,
-                    capture_output=not quiet,
-                    text=True,
-                    check=True
-                )
+                subprocess.run(cmd, capture_output=not quiet, text=True, check=True)
                 logger.info("Successfully built image: %s", job_type.image_name)
                 return True
             except subprocess.CalledProcessError as e:
                 error_msg = e.stderr if e.stderr else str(e)
                 logger.error("Failed to build image: %s", error_msg)
-                raise BuildError(
-                    f"Failed to build {job_type.name}: {error_msg}"
-                ) from e
+                raise BuildError(f"Failed to build {job_type.name}: {error_msg}") from e
 
     def build_all(
-        self,
-        registry: JobTypeRegistry,
-        no_cache: bool = False,
-        quiet: bool = False
+        self, registry: JobTypeRegistry, no_cache: bool = False, quiet: bool = False
     ) -> dict[str, bool]:
         """
         Build images for all registered job types.
@@ -274,9 +262,7 @@ CMD ["python", "-u", "/code/main.py"]
         """
         try:
             subprocess.run(
-                ["docker", "image", "inspect", job_type.image_name],
-                capture_output=True,
-                check=True
+                ["docker", "image", "inspect", job_type.image_name], capture_output=True, check=True
             )
             return True
         except subprocess.CalledProcessError:
@@ -293,11 +279,7 @@ CMD ["python", "-u", "/code/main.py"]
             True if removed successfully
         """
         try:
-            subprocess.run(
-                ["docker", "rmi", job_type.image_name],
-                capture_output=True,
-                check=True
-            )
+            subprocess.run(["docker", "rmi", job_type.image_name], capture_output=True, check=True)
             return True
         except subprocess.CalledProcessError:
             return False

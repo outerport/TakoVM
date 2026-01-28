@@ -4,12 +4,12 @@ Retry logic with exponential backoff for transient failures.
 Provides decorators and utilities for retrying operations that may fail temporarily.
 """
 
-import time
-import random
-import logging
 import functools
+import logging
+import random
+import time
 from dataclasses import dataclass
-from typing import Optional, Callable, Tuple, Type, Set
+from typing import Callable, Optional, Set, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +78,7 @@ def is_transient_error(error: Exception) -> bool:
     return False
 
 
-def calculate_delay(
-    attempt: int,
-    config: RetryConfig
-) -> float:
+def calculate_delay(attempt: int, config: RetryConfig) -> float:
     """
     Calculate delay before next retry attempt.
 
@@ -95,7 +92,7 @@ def calculate_delay(
         Delay in seconds
     """
     # Exponential backoff
-    delay = config.base_delay * (config.exponential_base ** attempt)
+    delay = config.base_delay * (config.exponential_base**attempt)
 
     # Cap at max delay
     delay = min(delay, config.max_delay)
@@ -111,7 +108,7 @@ def calculate_delay(
 def retry(
     config: Optional[RetryConfig] = None,
     retryable_exceptions: Optional[Tuple[Type[Exception], ...]] = None,
-    on_retry: Optional[Callable[[Exception, int], None]] = None
+    on_retry: Optional[Callable[[Exception, int], None]] = None,
 ):
     """
     Decorator for retrying a function with exponential backoff.
@@ -157,9 +154,7 @@ def retry(
 
                     # Check if error is transient
                     if not is_transient_error(e):
-                        logger.debug(
-                            f"Non-transient error in {func.__name__}, not retrying: {e}"
-                        )
+                        logger.debug(f"Non-transient error in {func.__name__}, not retrying: {e}")
                         raise
 
                     # Calculate delay
@@ -182,6 +177,7 @@ def retry(
                 raise last_exception
 
         return wrapper
+
     return decorator
 
 
@@ -231,8 +227,7 @@ class RetryContext:
         if self.should_retry() and is_transient_error(error):
             delay = calculate_delay(self.attempt - 1, self.config)
             logger.info(
-                f"Retry {self.attempt}/{self.config.max_attempts} "
-                f"after {delay:.2f}s: {error}"
+                f"Retry {self.attempt}/{self.config.max_attempts} after {delay:.2f}s: {error}"
             )
             time.sleep(delay)
 

@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def sha256_json(obj: object) -> str:
@@ -27,9 +27,9 @@ def sha256_json(obj: object) -> str:
     Returns:
         Hex-encoded SHA256 hash
     """
-    canonical = json.dumps(
-        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    canonical = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
     return hashlib.sha256(canonical).hexdigest()
 
 
@@ -64,7 +64,7 @@ class InputArtifact(BaseModel):
     size_bytes: int = Field(..., ge=0, le=1073741824)  # Max 1GB
     """File size in bytes."""
 
-    sha256: str = Field(..., min_length=64, max_length=64, pattern=r'^[a-f0-9]{64}$')
+    sha256: str = Field(..., min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     """SHA256 hash of file contents (hex-encoded)."""
 
     content_type: Optional[str] = Field(default=None, max_length=255)
@@ -73,13 +73,13 @@ class InputArtifact(BaseModel):
     storage_key: str = Field(..., min_length=1, max_length=1024)
     """Storage location key, e.g., 'runs/<id>/inputs/input.svg'."""
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def validate_filename(cls, v: str) -> str:
         """Validate filename is safe (no path traversal)."""
-        if '/' in v or '\\' in v:
+        if "/" in v or "\\" in v:
             raise ValueError("Filename cannot contain path separators")
-        if v in ('..', '.'):
+        if v in ("..", "."):
             raise ValueError("Invalid filename")
         return v
 
@@ -95,7 +95,7 @@ class Artifact(BaseModel):
     size_bytes: int = Field(..., ge=0, le=1073741824)  # Max 1GB
     """File size in bytes."""
 
-    sha256: str = Field(..., min_length=64, max_length=64, pattern=r'^[a-f0-9]{64}$')
+    sha256: str = Field(..., min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     """SHA256 hash of file contents (hex-encoded)."""
 
     content_type: Optional[str] = Field(default=None, max_length=255)
@@ -104,13 +104,13 @@ class Artifact(BaseModel):
     storage_key: str = Field(..., min_length=1, max_length=1024)
     """Storage location key, e.g., 'runs/<id>/artifacts/output.png'."""
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def validate_filename(cls, v: str) -> str:
         """Validate filename is safe (no path traversal)."""
-        if '/' in v or '\\' in v:
+        if "/" in v or "\\" in v:
             raise ValueError("Filename cannot contain path separators")
-        if v in ('..', '.'):
+        if v in ("..", "."):
             raise ValueError("Invalid filename")
         return v
 
@@ -118,47 +118,47 @@ class Artifact(BaseModel):
 # Canonical error type values (from security.classify_error)
 ErrorType = Literal[
     # Signal-based errors
-    "timeout",           # Execution exceeded time limit
-    "oom",               # Out of memory (SIGKILL/137)
-    "cancelled",         # Cancelled by user (SIGTERM/143)
-    "segfault",          # Segmentation fault (SIGSEGV/139)
-    "abort",             # Process aborted (SIGABRT/134)
+    "timeout",  # Execution exceeded time limit
+    "oom",  # Out of memory (SIGKILL/137)
+    "cancelled",  # Cancelled by user (SIGTERM/143)
+    "segfault",  # Segmentation fault (SIGSEGV/139)
+    "abort",  # Process aborted (SIGABRT/134)
     "arithmetic_error",  # Floating point exception (SIGFPE/136)
-    "bus_error",         # Bus error (SIGBUS/135)
-    "pipe_error",        # Broken pipe (SIGPIPE/141)
-    "killed",            # Process killed by system
+    "bus_error",  # Bus error (SIGBUS/135)
+    "pipe_error",  # Broken pipe (SIGPIPE/141)
+    "killed",  # Process killed by system
     # Permission errors
-    "permission",        # Permission denied
+    "permission",  # Permission denied
     # Python errors
-    "syntax_error",      # SyntaxError, IndentationError
-    "import_error",      # ImportError, ModuleNotFoundError
-    "type_error",        # TypeError
-    "value_error",       # ValueError
-    "key_error",         # KeyError
-    "index_error",       # IndexError
-    "attribute_error",   # AttributeError
-    "name_error",        # NameError (undefined variable)
-    "file_not_found",    # FileNotFoundError
-    "file_error",        # IsADirectoryError, NotADirectoryError
-    "os_error",          # OSError, IOError
-    "recursion_error",   # RecursionError
-    "assertion_error",   # AssertionError
-    "division_error",    # ZeroDivisionError
-    "overflow_error",    # OverflowError
-    "encoding_error",    # UnicodeError
-    "json_error",        # JSONDecodeError
+    "syntax_error",  # SyntaxError, IndentationError
+    "import_error",  # ImportError, ModuleNotFoundError
+    "type_error",  # TypeError
+    "value_error",  # ValueError
+    "key_error",  # KeyError
+    "index_error",  # IndexError
+    "attribute_error",  # AttributeError
+    "name_error",  # NameError (undefined variable)
+    "file_not_found",  # FileNotFoundError
+    "file_error",  # IsADirectoryError, NotADirectoryError
+    "os_error",  # OSError, IOError
+    "recursion_error",  # RecursionError
+    "assertion_error",  # AssertionError
+    "division_error",  # ZeroDivisionError
+    "overflow_error",  # OverflowError
+    "encoding_error",  # UnicodeError
+    "json_error",  # JSONDecodeError
     # Dependency errors
     "dependency_error",  # Package installation failure (uv/pip)
     # Network errors
-    "network_error",     # ConnectionError
-    "network_timeout",   # Network request timed out
+    "network_error",  # ConnectionError
+    "network_timeout",  # Network request timed out
     # System errors
-    "docker_error",      # Docker image/command not found
+    "docker_error",  # Docker image/command not found
     "service_unavailable",  # Circuit breaker open
-    "config_error",      # Configuration error
-    "internal_error",    # Internal Tako VM error
-    "runtime_error",     # Generic runtime error
-    "unknown",           # Unknown error type
+    "config_error",  # Configuration error
+    "internal_error",  # Internal Tako VM error
+    "runtime_error",  # Generic runtime error
+    "unknown",  # Unknown error type
 ]
 
 
@@ -176,12 +176,12 @@ class ExecutionError(BaseModel):
 
 # Canonical job status values
 JobStatus = Literal[
-    "queued",     # Submitted, waiting in queue
-    "running",    # Currently executing
+    "queued",  # Submitted, waiting in queue
+    "running",  # Currently executing
     "succeeded",  # Completed successfully
-    "failed",     # Failed with error
-    "timeout",    # Exceeded time limit
-    "oom",        # Out of memory
+    "failed",  # Failed with error
+    "timeout",  # Exceeded time limit
+    "oom",  # Out of memory
     "cancelled",  # Cancelled by user/system
 ]
 
@@ -262,14 +262,22 @@ class ExecutionRecord(BaseModel):
     input_artifacts_hash: str = Field(default="", max_length=64)
     """SHA256 hash of canonical input artifacts manifest (hex-encoded, or empty)."""
 
-    @field_validator('code_hash', 'input_hash', 'params_hash', 'input_artifacts_hash', 'idempotency_fingerprint', mode='after')
+    @field_validator(
+        "code_hash",
+        "input_hash",
+        "params_hash",
+        "input_artifacts_hash",
+        "idempotency_fingerprint",
+        mode="after",
+    )
     @classmethod
     def validate_hash_field(cls, v: Optional[str]) -> Optional[str]:
         """Validate hash fields are either empty/None or valid SHA256 hex strings."""
         import re
+
         if v is None or v == "":
             return v
-        if len(v) != 64 or not re.match(r'^[a-f0-9]{64}$', v):
+        if len(v) != 64 or not re.match(r"^[a-f0-9]{64}$", v):
             raise ValueError("Hash must be empty or 64-character lowercase hex string")
         return v
 
@@ -360,7 +368,7 @@ class JobVersion(BaseModel):
     version_tag: Optional[str] = Field(default=None, max_length=64)
     """Semantic version tag, e.g., 'v1.0.0'."""
 
-    digest: str = Field(..., min_length=64, max_length=64, pattern=r'^[a-f0-9]{64}$')
+    digest: str = Field(..., min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     """SHA256 digest of job type configuration (full hex string)."""
 
     # Build metadata
@@ -380,14 +388,15 @@ class JobVersion(BaseModel):
     image_ref: str = Field(default="", max_length=256)
     """Full image reference, e.g., 'tako-vm-svg-processing@sha256:...'."""
 
-    @field_validator('dockerfile_hash', 'requirements_hash', mode='after')
+    @field_validator("dockerfile_hash", "requirements_hash", mode="after")
     @classmethod
     def validate_hash_field(cls, v: str) -> str:
         """Validate hash fields are either empty or valid SHA256 hex strings."""
         import re
+
         if v == "":
             return v
-        if len(v) != 64 or not re.match(r'^[a-f0-9]{64}$', v):
+        if len(v) != 64 or not re.match(r"^[a-f0-9]{64}$", v):
             raise ValueError("Hash must be empty or 64-character lowercase hex string")
         return v
 

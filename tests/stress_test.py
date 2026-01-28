@@ -11,14 +11,14 @@ Enterprise tests include:
 - Backpressure tracking (503s reported separately)
 """
 
-import asyncio
-import time
-import statistics
 import argparse
+import asyncio
+import statistics
+import time
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
-import httpx
+from typing import Any, Dict, List, Optional
 
+import httpx
 
 BASE_URL = "http://localhost:8000"
 
@@ -26,6 +26,7 @@ BASE_URL = "http://localhost:8000"
 @dataclass
 class StressTestResult:
     """Results from a stress test run."""
+
     test_name: str
     total_requests: int
     successful: int
@@ -98,9 +99,9 @@ class StressTestResult:
         return (stdev / mean) * 100
 
     def print_summary(self):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Test: {self.test_name}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Total Requests:    {self.total_requests}")
         print(f"Successful:        {self.successful}")
         print(f"Failed:            {self.failed}")
@@ -114,25 +115,25 @@ class StressTestResult:
 
         # Enterprise metrics
         if self.backpressure_count > 0 or self.jobs_accepted > 0:
-            print(f"\n--- Capacity Metrics ---")
+            print("\n--- Capacity Metrics ---")
             print(f"Jobs Accepted:     {self.jobs_accepted}")
             print(f"Backpressure(503): {self.backpressure_count}")
             print(f"Acceptance Rate:   {self.acceptance_rate:.1f}%")
 
         if self.memory_samples_mb:
-            print(f"\n--- Memory Metrics ---")
+            print("\n--- Memory Metrics ---")
             print(f"Memory Start:      {self.memory_samples_mb[0]:.1f} MB")
             print(f"Memory End:        {self.memory_samples_mb[-1]:.1f} MB")
             print(f"Memory Growth:     {self.memory_growth_pct:.1f}%")
 
         if self.throughput_samples:
-            print(f"\n--- Stability Metrics ---")
+            print("\n--- Stability Metrics ---")
             print(f"Throughput Min:    {min(self.throughput_samples):.1f} req/s")
             print(f"Throughput Max:    {max(self.throughput_samples):.1f} req/s")
             print(f"Throughput CV:     {self.throughput_stability:.1f}%")
 
         if self.errors:
-            print(f"\n--- Errors ---")
+            print("\n--- Errors ---")
             for error, count in sorted(self.errors.items(), key=lambda x: -x[1]):
                 print(f"  {error}: {count}")
 
@@ -239,8 +240,7 @@ async def stress_test_sync_execution(
     async def bounded_request(client, i):
         async with semaphore:
             return await make_request(
-                client, "POST", f"{BASE_URL}/execute",
-                json_data={"code": f"print({i} * 2)"}
+                client, "POST", f"{BASE_URL}/execute", json_data={"code": f"print({i} * 2)"}
             )
 
     limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
@@ -294,7 +294,7 @@ async def stress_test_async_execution(
             try:
                 resp = await client.post(
                     f"{BASE_URL}/execute/async",
-                    json={"code": f"import time; time.sleep(0.1); print({i})"}
+                    json={"code": f"import time; time.sleep(0.1); print({i})"},
                 )
                 latency_ms = (time.perf_counter() - start) * 1000
                 if resp.status_code < 400:
@@ -361,7 +361,7 @@ async def stress_test_queue_flood(
             try:
                 resp = await client.post(
                     f"{BASE_URL}/execute/async",
-                    json={"code": f"import time; time.sleep(2); print({i})"}
+                    json={"code": f"import time; time.sleep(2); print({i})"},
                 )
                 latency_ms = (time.perf_counter() - start) * 1000
                 if resp.status_code == 200:
@@ -429,10 +429,7 @@ async def stress_test_idempotency(
             try:
                 resp = await client.post(
                     f"{BASE_URL}/execute/async",
-                    json={
-                        "code": "print('idempotent')",
-                        "idempotency_key": idempotency_key
-                    }
+                    json={"code": "print('idempotent')", "idempotency_key": idempotency_key},
                 )
                 latency_ms = (time.perf_counter() - start) * 1000
                 if resp.status_code < 400:
@@ -503,9 +500,7 @@ async def stress_test_mixed_workload(
     async def health_worker(client):
         while not stop_event.is_set():
             async with semaphore:
-                success, latency_ms, error = await make_request(
-                    client, "GET", f"{BASE_URL}/health"
-                )
+                success, latency_ms, error = await make_request(client, "GET", f"{BASE_URL}/health")
                 async with lock:
                     result.total_requests += 1
                     result.latencies_ms.append(latency_ms)
@@ -523,8 +518,7 @@ async def stress_test_mixed_workload(
                 start = time.perf_counter()
                 try:
                     resp = await client.post(
-                        f"{BASE_URL}/execute/async",
-                        json={"code": f"print({i})"}
+                        f"{BASE_URL}/execute/async", json={"code": f"print({i})"}
                     )
                     latency_ms = (time.perf_counter() - start) * 1000
                     async with lock:
@@ -542,7 +536,9 @@ async def stress_test_mixed_workload(
                             result.backpressure_count += 1
                         else:
                             result.failed += 1
-                            result.errors[f"HTTP {resp.status_code}"] = result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                            result.errors[f"HTTP {resp.status_code}"] = (
+                                result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                            )
                 except Exception as e:
                     async with lock:
                         result.failed += 1
@@ -617,10 +613,7 @@ async def stress_test_baseline(
         for i in range(num_requests):
             req_start = time.perf_counter()
             try:
-                resp = await client.post(
-                    f"{BASE_URL}/execute/async",
-                    json={"code": f"print({i})"}
-                )
+                resp = await client.post(f"{BASE_URL}/execute/async", json={"code": f"print({i})"})
                 latency_ms = (time.perf_counter() - req_start) * 1000
                 result.latencies_ms.append(latency_ms)
                 if resp.status_code < 400:
@@ -631,7 +624,9 @@ async def stress_test_baseline(
                     result.backpressure_count += 1
                 else:
                     result.failed += 1
-                    result.errors[f"HTTP {resp.status_code}"] = result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                    result.errors[f"HTTP {resp.status_code}"] = (
+                        result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                    )
             except Exception as e:
                 latency_ms = (time.perf_counter() - req_start) * 1000
                 result.latencies_ms.append(latency_ms)
@@ -696,8 +691,7 @@ async def stress_test_soak(
                 start = time.perf_counter()
                 try:
                     resp = await client.post(
-                        f"{BASE_URL}/execute/async",
-                        json={"code": f"print({i})"}
+                        f"{BASE_URL}/execute/async", json={"code": f"print({i})"}
                     )
                     latency_ms = (time.perf_counter() - start) * 1000
                     async with lock:
@@ -712,7 +706,9 @@ async def stress_test_soak(
                             result.backpressure_count += 1
                         else:
                             result.failed += 1
-                            result.errors[f"HTTP {resp.status_code}"] = result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                            result.errors[f"HTTP {resp.status_code}"] = (
+                                result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                            )
                 except Exception as e:
                     async with lock:
                         result.failed += 1
@@ -747,8 +743,10 @@ async def stress_test_soak(
 
             # Print progress
             elapsed_total = len(result.throughput_samples) * sample_interval_sec
-            print(f"  [{elapsed_total}s] Throughput: {result.throughput_samples[-1]:.1f} req/s, "
-                  f"Total: {result.total_requests}, Backpressure: {result.backpressure_count}")
+            print(
+                f"  [{elapsed_total}s] Throughput: {result.throughput_samples[-1]:.1f} req/s, "
+                f"Total: {result.total_requests}, Backpressure: {result.backpressure_count}"
+            )
 
     limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
     timeout = httpx.Timeout(30.0)
@@ -804,10 +802,7 @@ async def stress_test_capacity(
         while not stop_event.is_set():
             start = time.perf_counter()
             try:
-                resp = await client.post(
-                    f"{BASE_URL}/execute/async",
-                    json={"code": f"print({i})"}
-                )
+                resp = await client.post(f"{BASE_URL}/execute/async", json={"code": f"print({i})"})
                 latency_ms = (time.perf_counter() - start) * 1000
                 async with lock:
                     result.total_requests += 1
@@ -820,7 +815,9 @@ async def stress_test_capacity(
                         result.backpressure_count += 1
                     else:
                         result.failed += 1
-                        result.errors[f"HTTP {resp.status_code}"] = result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                        result.errors[f"HTTP {resp.status_code}"] = (
+                            result.errors.get(f"HTTP {resp.status_code}", 0) + 1
+                        )
             except Exception as e:
                 async with lock:
                     result.failed += 1
@@ -872,14 +869,25 @@ async def main():
     parser = argparse.ArgumentParser(description="Tako VM Stress Test")
     parser.add_argument("--quick", action="store_true", help="Run quick test suite")
     parser.add_argument("--full", action="store_true", help="Run full test suite")
-    parser.add_argument("--enterprise", action="store_true", help="Run enterprise test suite (soak, capacity)")
-    parser.add_argument("--soak-duration", type=int, default=300, help="Soak test duration in seconds (default: 300)")
-    parser.add_argument("--test", type=str, help="Run specific test: health, sync, async, flood, idempotency, mixed, baseline, soak, capacity")
+    parser.add_argument(
+        "--enterprise", action="store_true", help="Run enterprise test suite (soak, capacity)"
+    )
+    parser.add_argument(
+        "--soak-duration",
+        type=int,
+        default=300,
+        help="Soak test duration in seconds (default: 300)",
+    )
+    parser.add_argument(
+        "--test",
+        type=str,
+        help="Run specific test: health, sync, async, flood, idempotency, mixed, baseline, soak, capacity",
+    )
     args = parser.parse_args()
 
-    print("="*60)
+    print("=" * 60)
     print("Tako VM Stress Test")
-    print("="*60)
+    print("=" * 60)
 
     if not await check_server_health():
         print("\nERROR: Server not running. Start with: docker-compose up -d")
@@ -948,23 +956,27 @@ async def main():
         result.print_summary()
 
     # Overall summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("OVERALL SUMMARY")
-    print("="*60)
+    print("=" * 60)
     total_requests = sum(r.total_requests for r in results)
     total_successful = sum(r.successful for r in results)
     total_failed = sum(r.failed for r in results)
-    all_latencies = [l for r in results for l in r.latencies_ms]
+    all_latencies = [lat for r in results for lat in r.latencies_ms]
 
     print(f"Total Requests:    {total_requests}")
     print(f"Successful:        {total_successful}")
     print(f"Failed:            {total_failed}")
-    print(f"Overall Success:   {total_successful/total_requests*100:.1f}%" if total_requests else "N/A")
+    print(
+        f"Overall Success:   {total_successful / total_requests * 100:.1f}%"
+        if total_requests
+        else "N/A"
+    )
 
     if all_latencies:
         print(f"Overall Avg Lat:   {statistics.mean(all_latencies):.1f}ms")
         sorted_all = sorted(all_latencies)
-        print(f"Overall P95 Lat:   {sorted_all[int(len(sorted_all)*0.95)]:.1f}ms")
+        print(f"Overall P95 Lat:   {sorted_all[int(len(sorted_all) * 0.95)]:.1f}ms")
 
     # Check for critical issues
     critical_issues = []
@@ -977,11 +989,17 @@ async def main():
 
         # Enterprise checks
         if r.acceptance_rate < 95 and r.backpressure_count > 0:
-            warnings.append(f"{r.test_name}: High backpressure - only {r.acceptance_rate:.1f}% jobs accepted")
+            warnings.append(
+                f"{r.test_name}: High backpressure - only {r.acceptance_rate:.1f}% jobs accepted"
+            )
         if r.memory_growth_pct > 10:
-            warnings.append(f"{r.test_name}: Memory grew {r.memory_growth_pct:.1f}% (potential leak)")
+            warnings.append(
+                f"{r.test_name}: Memory grew {r.memory_growth_pct:.1f}% (potential leak)"
+            )
         if r.throughput_stability > 30:
-            warnings.append(f"{r.test_name}: Unstable throughput (CV={r.throughput_stability:.1f}%)")
+            warnings.append(
+                f"{r.test_name}: Unstable throughput (CV={r.throughput_stability:.1f}%)"
+            )
         if r.p99_latency_ms > 500:
             warnings.append(f"{r.test_name}: P99 latency exceeds 500ms ({r.p99_latency_ms:.1f}ms)")
 

@@ -4,13 +4,11 @@ Tests for the Sandbox class (library mode).
 These tests verify the direct Docker sandbox execution without a server.
 """
 
-import json
-import os
 import tempfile
-import pytest
 from pathlib import Path
 
-from tako_vm.sandbox import Sandbox, SandboxResult, run as sandbox_run
+from tako_vm.sandbox import Sandbox, SandboxResult
+from tako_vm.sandbox import run as sandbox_run
 
 
 class TestSandboxResult:
@@ -280,9 +278,7 @@ class TestSandboxPackageDirs:
             # Create a local package
             pkg_dir = Path(tmpdir) / "my_utils"
             pkg_dir.mkdir()
-            (pkg_dir / "__init__.py").write_text(
-                "def greet(name):\n    return f'Hello, {name}!'\n"
-            )
+            (pkg_dir / "__init__.py").write_text("def greet(name):\n    return f'Hello, {name}!'\n")
 
             # Run code that imports the package
             code = """
@@ -297,8 +293,7 @@ print(greet('World'))
 
     def test_sandbox_multiple_package_dirs(self):
         """Mount multiple local directories."""
-        with tempfile.TemporaryDirectory() as tmpdir1, \
-             tempfile.TemporaryDirectory() as tmpdir2:
+        with tempfile.TemporaryDirectory() as tmpdir1, tempfile.TemporaryDirectory() as tmpdir2:
             # Create first package
             pkg1 = Path(tmpdir1) / "utils1"
             pkg1.mkdir()

@@ -5,8 +5,9 @@ This example shows how to use your own local Python packages
 inside the sandbox without publishing them to PyPI.
 """
 
-import tempfile
 import os
+import tempfile
+
 from tako_vm import Sandbox
 
 # Create a temporary package to demonstrate

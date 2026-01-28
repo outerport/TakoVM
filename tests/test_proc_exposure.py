@@ -8,7 +8,7 @@ WARNING: These are intentionally vulnerable scenarios to document the risk.
 """
 
 import pytest
-import json
+
 from tako_vm.execution.worker import CodeExecutor
 
 
@@ -266,6 +266,7 @@ with open('/output/result.json', 'w') as f:
 
         # Simulate a job type with custom environment variables
         from tako_vm.job_types import JobType
+
         job_type = JobType(
             name="test-with-secrets",
             requirements=[],
@@ -274,8 +275,8 @@ with open('/output/result.json', 'w') as f:
             timeout=10,
             environment={
                 "API_KEY": "sk-secret-api-key-12345",
-                "DATABASE_URL": "postgresql://user:password@db.internal:5432/app"
-            }
+                "DATABASE_URL": "postgresql://user:password@db.internal:5432/app",
+            },
         )
 
         executor.registry.register(job_type)
@@ -284,7 +285,7 @@ with open('/output/result.json', 'w') as f:
             "id": "test-env-secrets",
             "code": code,
             "input_data": {},
-            "job_type": "test-with-secrets"
+            "job_type": "test-with-secrets",
         }
 
         result = executor.execute_job(job)
@@ -340,8 +341,9 @@ with open('/output/result.json', 'w') as f:
         # This assertion WILL FAIL until mitigations are implemented
         # Currently /proc/self/environ is "accessible"
         # After mitigations, it should be "blocked" or "not_found"
-        assert result["output"]["status"] in ("blocked", "not_found"), \
+        assert result["output"]["status"] in ("blocked", "not_found"), (
             "/proc/self/environ should not be accessible"
+        )
 
 
 if __name__ == "__main__":

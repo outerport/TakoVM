@@ -7,31 +7,32 @@ Loads configuration from YAML file with optional env var overrides.
 
 import os
 from pathlib import Path
-from typing import Optional, Any, List, Dict
+from typing import Any, Dict, List, Optional
+
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 # Default config file locations (searched in order)
 CONFIG_SEARCH_PATHS = [
-    Path("tako_vm.yaml"),                     # Current directory
-    Path("config/tako_vm.yaml"),              # Config subdirectory
-    Path.home() / ".tako_vm" / "config.yaml", # User home
-    Path("/etc/tako_vm/config.yaml"),         # System-wide
+    Path("tako_vm.yaml"),  # Current directory
+    Path("config/tako_vm.yaml"),  # Config subdirectory
+    Path.home() / ".tako_vm" / "config.yaml",  # User home
+    Path("/etc/tako_vm/config.yaml"),  # System-wide
 ]
 
 
 def get_default_data_dir() -> Path:
     """Get default data directory."""
-    xdg_data = os.environ.get('XDG_DATA_HOME')
+    xdg_data = os.environ.get("XDG_DATA_HOME")
     if xdg_data:
-        return Path(xdg_data) / 'tako_vm'
-    return Path.home() / '.tako_vm'
+        return Path(xdg_data) / "tako_vm"
+    return Path.home() / ".tako_vm"
 
 
 # =============================================================================
 # Pydantic Configuration Models with Validation
 # =============================================================================
+
 
 class ContainerLimits(BaseModel):
     """Container resource limits with validation bounds."""
@@ -55,7 +56,7 @@ class ContainerLimits(BaseModel):
     # PIDs limit
     pids_limit: int = Field(default=100, ge=10, le=1000)
 
-    @field_validator('tmpfs_size')
+    @field_validator("tmpfs_size")
     @classmethod
     def validate_tmpfs_size(cls, v: str) -> str:
         """Validate tmpfs size format and bounds."""
@@ -64,11 +65,11 @@ class ContainerLimits(BaseModel):
             raise ValueError("tmpfs_size cannot be empty")
 
         # Parse size
-        if v.endswith('g'):
+        if v.endswith("g"):
             size_mb = int(v[:-1]) * 1024
-        elif v.endswith('m'):
+        elif v.endswith("m"):
             size_mb = int(v[:-1])
-        elif v.endswith('k'):
+        elif v.endswith("k"):
             size_mb = int(v[:-1]) // 1024
         else:
             # Assume bytes
@@ -82,8 +83,8 @@ class ContainerLimits(BaseModel):
 
         return v
 
-    @model_validator(mode='after')
-    def validate_limits(self) -> 'ContainerLimits':
+    @model_validator(mode="after")
+    def validate_limits(self) -> "ContainerLimits":
         """Ensure hard limits >= soft limits."""
         if self.nofile_hard < self.nofile_soft:
             raise ValueError("nofile_hard must be >= nofile_soft")
@@ -108,15 +109,15 @@ class JobTypeConfig(BaseModel):
     timeout: int = Field(default=30, ge=1, le=3600)
     network_enabled: bool = Field(default=False, description="Allow network access (security risk)")
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Validate job type name format."""
-        if not v.replace('-', '').replace('_', '').isalnum():
+        if not v.replace("-", "").replace("_", "").isalnum():
             raise ValueError("name must contain only alphanumeric, dash, or underscore")
         return v
 
-    @field_validator('memory_limit')
+    @field_validator("memory_limit")
     @classmethod
     def validate_memory_limit(cls, v: str) -> str:
         """Validate memory limit format."""
@@ -125,9 +126,9 @@ class JobTypeConfig(BaseModel):
             raise ValueError("memory_limit cannot be empty")
 
         # Parse and validate
-        if v.endswith('g'):
+        if v.endswith("g"):
             size_mb = int(v[:-1]) * 1024
-        elif v.endswith('m'):
+        elif v.endswith("m"):
             size_mb = int(v[:-1])
         else:
             raise ValueError("memory_limit must end with 'm' or 'g'")
@@ -144,33 +145,44 @@ class TakoVMConfig(BaseModel):
     """Tako VM configuration with full validation."""
 
     # Mode
-    production_mode: bool = Field(default=False, description="Strict mode requiring pre-built images")
+    production_mode: bool = Field(
+        default=False, description="Strict mode requiring pre-built images"
+    )
 
     # Logging
-    log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
+    log_level: str = Field(
+        default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+    )
 
     # Server
     server_host: str = Field(default="0.0.0.0", description="Server host to bind to")
     server_port: int = Field(default=8000, ge=1, le=65535, description="Server port to bind to")
 
     # Retry configuration
-    max_retry_attempts: int = Field(default=2, ge=1, le=10, description="Maximum retry attempts for transient failures")
-    retry_base_delay: float = Field(default=1.0, ge=0.1, le=60.0, description="Base delay between retries in seconds")
+    max_retry_attempts: int = Field(
+        default=2, ge=1, le=10, description="Maximum retry attempts for transient failures"
+    )
+    retry_base_delay: float = Field(
+        default=1.0, ge=0.1, le=60.0, description="Base delay between retries in seconds"
+    )
 
     # Queue wait timeout
-    queue_wait_timeout: float = Field(default=1.0, ge=0.1, le=30.0, description="Queue wait timeout in seconds")
+    queue_wait_timeout: float = Field(
+        default=1.0, ge=0.1, le=30.0, description="Queue wait timeout in seconds"
+    )
 
     # Paths (stored as strings internally, exposed as Path via properties)
     data_dir_str: str = Field(default_factory=lambda: str(get_default_data_dir()), alias="data_dir")
 
-    @field_validator('log_level')
+    @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
         """Validate log level is a valid Python logging level."""
-        valid_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         if v.upper() not in valid_levels:
             raise ValueError(f"log_level must be one of: {', '.join(sorted(valid_levels))}")
         return v.upper()
+
     database_file_str: Optional[str] = Field(default=None, alias="database_file")
     seccomp_profile_path_str: Optional[str] = Field(default=None, alias="seccomp_profile_path")
 
@@ -179,14 +191,14 @@ class TakoVMConfig(BaseModel):
     max_queue_size: int = Field(default=100, ge=1, le=10000)
 
     # Output limits (with bounds)
-    max_stdout_bytes: int = Field(default=65536, ge=1024, le=104857600)      # 1KB to 100MB
-    max_stderr_bytes: int = Field(default=65536, ge=1024, le=104857600)      # 1KB to 100MB
+    max_stdout_bytes: int = Field(default=65536, ge=1024, le=104857600)  # 1KB to 100MB
+    max_stderr_bytes: int = Field(default=65536, ge=1024, le=104857600)  # 1KB to 100MB
     max_artifact_bytes: int = Field(default=10485760, ge=1024, le=1073741824)  # 1KB to 1GB
     max_total_artifacts_bytes: int = Field(default=52428800, ge=1024, le=10737418240)  # 1KB to 10GB
 
     # Input limits
-    max_input_bytes: int = Field(default=1048576, ge=1024, le=104857600)     # 1KB to 100MB
-    max_code_bytes: int = Field(default=102400, ge=1024, le=10485760)        # 1KB to 10MB
+    max_input_bytes: int = Field(default=1048576, ge=1024, le=104857600)  # 1KB to 100MB
+    max_code_bytes: int = Field(default=102400, ge=1024, le=10485760)  # 1KB to 10MB
 
     # Execution limits
     default_timeout: int = Field(default=30, ge=1, le=3600)
@@ -215,14 +227,14 @@ class TakoVMConfig(BaseModel):
 
     model_config = {"extra": "forbid", "populate_by_name": True}  # Reject unknown keys, allow alias
 
-    @model_validator(mode='after')
-    def validate_timeouts(self) -> 'TakoVMConfig':
+    @model_validator(mode="after")
+    def validate_timeouts(self) -> "TakoVMConfig":
         """Ensure default_timeout <= max_timeout."""
         if self.default_timeout > self.max_timeout:
             raise ValueError("default_timeout must be <= max_timeout")
         return self
 
-    def resolve_paths(self) -> 'TakoVMConfig':
+    def resolve_paths(self) -> "TakoVMConfig":
         """Resolve all paths and create directories."""
         # Data directory
         self._resolved_data_dir = Path(self.data_dir_str)
@@ -288,6 +300,7 @@ class TakoVMConfig(BaseModel):
 # =============================================================================
 # Configuration Loading
 # =============================================================================
+
 
 def find_config_file() -> Optional[Path]:
     """Find config file from search paths."""

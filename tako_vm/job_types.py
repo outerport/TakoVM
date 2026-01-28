@@ -111,9 +111,7 @@ class JobTypeRegistry:
 
     def _save(self):
         """Save job types to config file."""
-        data = {
-            "job_types": [jt.to_dict() for jt in self._job_types.values()]
-        }
+        data = {"job_types": [jt.to_dict() for jt in self._job_types.values()]}
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 

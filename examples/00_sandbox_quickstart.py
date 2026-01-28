@@ -22,7 +22,8 @@ with Sandbox() as sb:
 # With input data
 print("=== With Input Data ===")
 with Sandbox() as sb:
-    result = sb.run("""
+    result = sb.run(
+        """
 import json
 
 # Read input data
@@ -36,7 +37,9 @@ print(f"Sum of {data['numbers']} = {total}")
 # Write output
 with open('/output/result.json', 'w') as f:
     json.dump({'total': total}, f)
-""", input_data={'numbers': [1, 2, 3, 4, 5]})
+""",
+        input_data={"numbers": [1, 2, 3, 4, 5]},
+    )
 
     print(f"stdout: {result.stdout}")
     print(f"output: {result.output}")  # Parsed from /output/result.json
@@ -45,10 +48,13 @@ with open('/output/result.json', 'w') as f:
 # With dependencies
 print("=== With Dependencies ===")
 with Sandbox() as sb:
-    result = sb.run("""
+    result = sb.run(
+        """
 import requests
 print(f"requests version: {requests.__version__}")
-""", requirements=["requests"])
+""",
+        requirements=["requests"],
+    )
     print(f"stdout: {result.stdout}")
     print()
 

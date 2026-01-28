@@ -7,16 +7,17 @@ Provides:
 - Logging filter for adding correlation ID to log records
 """
 
-import uuid
 import logging
+import uuid
 from contextvars import ContextVar
 from typing import Optional
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 # Context variable to hold correlation ID for current request
-correlation_id_var: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
+correlation_id_var: ContextVar[Optional[str]] = ContextVar("correlation_id", default=None)
 
 # Header name for correlation ID (standard header)
 CORRELATION_ID_HEADER = "X-Correlation-ID"
@@ -104,8 +105,8 @@ def configure_logging_with_correlation():
     """
     # Create formatter with correlation ID
     formatter = logging.Formatter(
-        '%(asctime)s [%(correlation_id)s] %(levelname)s %(name)s: %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s [%(correlation_id)s] %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Add filter and formatter to root logger handlers
@@ -125,13 +126,8 @@ def configure_logging_with_correlation():
 
 # Convenience functions for logging with correlation ID
 
-def log_with_correlation(
-    logger: logging.Logger,
-    level: int,
-    message: str,
-    *args,
-    **kwargs
-) -> None:
+
+def log_with_correlation(logger: logging.Logger, level: int, message: str, *args, **kwargs) -> None:
     """
     Log a message with correlation ID context.
 

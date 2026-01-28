@@ -40,11 +40,8 @@ with open("/output/result.json", "w") as f:
     print("[1] Submitting async job...")
     response = requests.post(
         f"{BASE_URL}/execute/async",
-        json={
-            "code": code,
-            "input_data": {"items": ["a", "b", "c"]}
-        },
-        timeout=30
+        json={"code": code, "input_data": {"items": ["a", "b", "c"]}},
+        timeout=30,
     )
 
     job = response.json()

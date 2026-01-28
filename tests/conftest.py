@@ -2,7 +2,6 @@
 Pytest configuration for Tako VM tests.
 """
 
-import os
 import subprocess
 import warnings
 
@@ -12,6 +11,7 @@ import pytest
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="urllib3")
 try:
     from urllib3.exceptions import NotOpenSSLWarning
+
     warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 except ImportError:
     pass
@@ -51,22 +51,16 @@ EXECUTOR_IMAGE_AVAILABLE = is_executor_image_available()
 
 
 # Skip markers for tests that require Docker
-requires_docker = pytest.mark.skipif(
-    not DOCKER_AVAILABLE,
-    reason="Docker is not available"
-)
+requires_docker = pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker is not available")
 
 requires_executor_image = pytest.mark.skipif(
-    not EXECUTOR_IMAGE_AVAILABLE,
-    reason="Docker executor image (code-executor:latest) not built"
+    not EXECUTOR_IMAGE_AVAILABLE, reason="Docker executor image (code-executor:latest) not built"
 )
 
 
 def pytest_configure(config):
     """Add custom markers."""
-    config.addinivalue_line(
-        "markers", "requires_docker: mark test as requiring Docker"
-    )
+    config.addinivalue_line("markers", "requires_docker: mark test as requiring Docker")
     config.addinivalue_line(
         "markers", "requires_executor_image: mark test as requiring the executor image"
     )
@@ -80,9 +74,11 @@ def pytest_collection_modifyitems(config, items):
             if not DOCKER_AVAILABLE:
                 item.add_marker(pytest.mark.skip(reason="Docker not available"))
             elif not EXECUTOR_IMAGE_AVAILABLE:
-                item.add_marker(pytest.mark.skip(
-                    reason="Executor image not built. Run: docker build -t code-executor:latest -f docker/Dockerfile.executor ."
-                ))
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason="Executor image not built. Run: docker build -t code-executor:latest -f docker/Dockerfile.executor ."
+                    )
+                )
 
         # Auto-skip API tests if Docker not available
         if "test_api" in item.nodeid and "TestHealthEndpoint" not in item.nodeid:

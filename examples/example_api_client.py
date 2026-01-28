@@ -1,6 +1,7 @@
 """
 Example client demonstrating how to call the API.
 """
+
 import json
 
 import requests
@@ -22,12 +23,8 @@ def execute_code(code: str, input_data: dict, timeout: int = 30):
     """
     response = requests.post(
         f"{API_URL}/execute",
-        json={
-            "code": code,
-            "input_data": input_data,
-            "timeout": timeout
-        },
-        timeout=timeout + 10
+        json={"code": code, "input_data": input_data, "timeout": timeout},
+        timeout=timeout + 10,
     )
     response.raise_for_status()
     return response.json()
