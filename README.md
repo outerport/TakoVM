@@ -45,13 +45,6 @@ Tako VM executes Python code in isolated Docker containers with:
 - **Fast Dependencies** - Runtime package installation via [uv](https://github.com/astral-sh/uv) (~10x faster than pip)
 - **Execution History** - Full job records with timing, artifacts, and error details
 
-```mermaid
-flowchart LR
-    Client[Your App] --> API[FastAPI :8000]
-    API --> Queue[Job Queue] --> Pool[Worker Pool] --> Docker[Docker Container]
-    API <--> DB[(SQLite)]
-```
-
 **Security layers applied to every container:**
 - `--network=none` (isolated by default)
 - `--read-only` filesystem
