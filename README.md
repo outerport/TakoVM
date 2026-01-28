@@ -17,12 +17,24 @@ with Sandbox() as sb:
 
 ## Why Tako VM?
 
-- **Job queue + workers** - Async execution with worker pool, no Redis/Celery setup needed
-- **Docker isolation** - Each job runs in its own container, can't affect other jobs or your system
-- **Execution logs** - Full history of every job run (stdout, stderr, artifacts)
-- **Network isolation** - Jobs run with no network by default, optional allowlist for API calls
+Sandbox solutions like [e2b](https://e2b.dev) and [microsandbox](https://github.com/microsandbox/microsandbox) give you isolated code execution—but that's it. You still need to build:
+
+| You build | With sandbox-only | With Tako VM |
+|-----------|-------------------|--------------|
+| Job queue | Redis + Celery/Bull | ✅ Built-in |
+| Execution history | Postgres + schema | ✅ SQLite included |
+| Retry logic | Custom code | ✅ Automatic |
+| Idempotency | Deduplication logic | ✅ `idempotency_key` |
+| Replay/debugging | Custom tooling | ✅ Rerun/fork API |
+
+**Tako VM is the complete package:**
+
+- **Job queue + workers** - Async execution with worker pool, no Redis/Celery setup
+- **Execution history** - Every job persisted with stdout, stderr, timing, artifacts
 - **Replay to debug** - Rerun past jobs with exact same code and inputs
-- **Self-hosted** - Runs on your machine, works offline, zero per-execution cost
+- **Docker isolation** - Each job in its own container with seccomp filtering
+- **Network isolation** - No network by default, optional allowlist per job type
+- **Self-hosted** - Your machine, offline-capable, zero per-execution cost
 
 ## Architecture
 
@@ -285,10 +297,6 @@ job_types:
       - requests
       - httpx
     network_enabled: true
-    allowed_hosts:
-      - "api.openai.com"
-      - "api.anthropic.com"
-      - "*.amazonaws.com"
 ```
 
 ### Network Control
@@ -300,8 +308,6 @@ To enable network:
 job_types:
   - name: my-api-job
     network_enabled: true      # Allow outbound connections
-    allowed_hosts:             # Optional: restrict to specific hosts
-      - "api.example.com"
 ```
 
 > **Note:** Jobs with runtime requirements need network access to install packages. If `network_enabled: false` with requirements, Tako VM temporarily uses bridge network for installation, then runs code with isolation. For true network isolation with dependencies, use pre-built images (see below).

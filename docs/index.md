@@ -1,8 +1,8 @@
 # Tako VM
 
-**Run AI-generated Python code safely. Local-first, no cloud required.**
+**Job queue infrastructure for AI agents. Not just a sandbox.**
 
-Tako VM executes untrusted Python code in isolated Docker containers with enterprise-grade security. Use it as a library or deploy as a server.
+Other tools give you isolated code execution. Tako VM gives you the complete job system: queue, workers, execution history, retries, and replay—all in one package.
 
 ## Quick Start (Library Mode)
 
@@ -20,13 +20,25 @@ with Sandbox() as sb:
 
 No server setup required. The Docker image builds automatically on first run.
 
-## Features
+## Why Tako VM?
 
-- **Library-First** - Use as a Python library or deploy as a server
-- **Local-First** - No cloud account, no per-execution fees
-- **Secure Isolation** - Network isolation, non-root execution, seccomp filtering
-- **Fast Dependencies** - Runtime package installation via uv (~10x faster than pip)
-- **Audit Trail** - Full execution records with timing and artifacts
+Sandbox-only tools (e2b, microsandbox) give you isolated execution. You still need to build the job system yourself.
+
+| Feature | Sandbox-only | Tako VM |
+|---------|--------------|---------|
+| Job queue | ❌ Build with Redis/Celery | ✅ Built-in |
+| Execution history | ❌ Build with Postgres | ✅ SQLite included |
+| Retries | ❌ Write retry logic | ✅ Automatic |
+| Replay/debugging | ❌ Build custom tooling | ✅ Rerun/fork API |
+| Idempotency | ❌ Implement deduplication | ✅ `idempotency_key` |
+
+**Tako VM includes:**
+
+- **Job queue + workers** - No Redis/Celery setup needed
+- **Execution history** - Every job persisted with timing and artifacts
+- **Replay to debug** - Rerun past jobs with exact same inputs
+- **Docker isolation** - Seccomp filtering, network isolation
+- **Self-hosted** - Zero per-execution cost, works offline
 
 ## Installation
 
