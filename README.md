@@ -24,97 +24,7 @@ with Sandbox() as sb:
 - **Replay to debug** - Rerun past jobs with exact same code and inputs
 - **Self-hosted** - Runs on your machine, works offline, zero per-execution cost
 
-## Quick Start (Library Mode)
-
-```bash
-uv pip install tako-vm
-```
-
-```python
-from tako_vm import Sandbox
-
-# Basic execution
-with Sandbox() as sb:
-    result = sb.run("print('Hello from sandbox!')")
-    print(result.stdout)
-
-# With dependencies (installed via uv, cached for speed)
-with Sandbox() as sb:
-    result = sb.run("""
-import pandas as pd
-print(pd.__version__)
-""", requirements=["pandas"])
-
-# With local packages
-sb = Sandbox(package_dirs=["./my_utils"])
-result = sb.run("from my_utils import helper; helper.process()")
-
-# With input/output data
-with Sandbox() as sb:
-    result = sb.run("""
-import json
-with open("/input/data.json") as f:
-    data = json.load(f)
-result = {"sum": data["x"] + data["y"]}
-with open("/output/result.json", "w") as f:
-    json.dump(result, f)
-""", input_data={"x": 10, "y": 20})
-    print(result.output)  # {"sum": 30}
-```
-
-Your code runs in a container with these paths:
-- `/input/data.json` - Your `input_data` as JSON (read-only)
-- `/output/result.json` - Write output here, returned as `result.output`
-- `/tmp/` - Temporary files (read-write)
-
-The first run builds the executor Docker image automatically (~30 seconds one-time setup).
-
-## Quick Start (Server Mode)
-
-For production workloads with job queuing, retries, and execution history:
-
-```zsh
-# Clone and install
-git clone https://github.com/example/tako-vm.git && cd tako-vm
-uv pip install -e ".[server]"
-
-# Build executor image and start server
-docker build -t code-executor:latest -f docker/Dockerfile.executor .
-tako-vm server
-```
-
-```bash
-# Execute code via API
-curl -X POST http://localhost:8000/execute \
-  -H "Content-Type: application/json" \
-  -d '{"code": "print(1 + 1)", "requirements": ["requests"]}'
-```
-
-## SDK Usage
-
-```python
-from dataclasses import dataclass
-import tako_vm
-
-tako_vm.configure('http://localhost:8000')
-
-@dataclass
-class Input:
-    x: int
-    y: int
-
-@dataclass
-class Output:
-    result: int
-
-def add(input: Input) -> Output:
-    return Output(result=input.x + input.y)
-
-result = tako_vm.send(add, Input(10, 20))
-print(result.result)  # 30
-```
-
-## Overview
+## Architecture
 
 Tako VM executes Python code in isolated Docker containers with:
 - **Security** - Network isolation, read-only filesystem, seccomp filtering, resource limits
@@ -184,6 +94,86 @@ flowchart TB
 uv venv && source .venv/bin/activate
 uv pip install -e ".[server]"
 docker build -t code-executor:latest -f docker/Dockerfile.executor .
+```
+
+## Quick Start (Library Mode)
+
+```python
+from tako_vm import Sandbox
+
+# Basic execution
+with Sandbox() as sb:
+    result = sb.run("print('Hello from sandbox!')")
+    print(result.stdout)
+
+# With dependencies (installed via uv, cached for speed)
+with Sandbox() as sb:
+    result = sb.run("""
+import pandas as pd
+print(pd.__version__)
+""", requirements=["pandas"])
+
+# With local packages
+sb = Sandbox(package_dirs=["./my_utils"])
+result = sb.run("from my_utils import helper; helper.process()")
+
+# With input/output data
+with Sandbox() as sb:
+    result = sb.run("""
+import json
+with open("/input/data.json") as f:
+    data = json.load(f)
+result = {"sum": data["x"] + data["y"]}
+with open("/output/result.json", "w") as f:
+    json.dump(result, f)
+""", input_data={"x": 10, "y": 20})
+    print(result.output)  # {"sum": 30}
+```
+
+Your code runs in a container with these paths:
+- `/input/data.json` - Your `input_data` as JSON (read-only)
+- `/output/result.json` - Write output here, returned as `result.output`
+- `/tmp/` - Temporary files (read-write)
+
+The first run builds the executor Docker image automatically (~30 seconds one-time setup).
+
+## Quick Start (Server Mode)
+
+For production workloads with job queuing, retries, and execution history:
+
+```bash
+tako-vm server
+```
+
+```bash
+# Execute code via API
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{"code": "print(1 + 1)", "requirements": ["requests"]}'
+```
+
+## SDK Usage
+
+```python
+from dataclasses import dataclass
+import tako_vm
+
+tako_vm.configure('http://localhost:8000')
+
+@dataclass
+class Input:
+    x: int
+    y: int
+
+@dataclass
+class Output:
+    result: int
+
+def add(input: Input) -> Output:
+    return Output(result=input.x + input.y)
+
+result = tako_vm.send(add, Input(10, 20))
+print(result.result)  # 30
 ```
 
 ## CLI Commands
