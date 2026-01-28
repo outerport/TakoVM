@@ -1,0 +1,132 @@
+# Tako VM Configuration Example
+# Copy this file to tako_vm.yaml and customize as needed.
+# All values shown are defaults.
+
+# =============================================================================
+# Mode
+# =============================================================================
+
+# Strict mode requiring pre-built images for job types
+production_mode: false
+
+# =============================================================================
+# Server
+# =============================================================================
+
+server_host: "0.0.0.0"
+server_port: 8000
+log_level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# =============================================================================
+# Workers & Queue
+# =============================================================================
+
+max_workers: 4        # Concurrent job workers (1-64)
+max_queue_size: 100   # Max pending jobs (1-10000)
+
+# =============================================================================
+# Execution Limits
+# =============================================================================
+
+default_timeout: 30   # Default job timeout in seconds (1-3600)
+max_timeout: 300      # Maximum allowed timeout (1-86400)
+
+# =============================================================================
+# Output Limits
+# =============================================================================
+
+max_stdout_bytes: 65536          # 64KB (1KB-100MB)
+max_stderr_bytes: 65536          # 64KB (1KB-100MB)
+max_artifact_bytes: 10485760     # 10MB per artifact (1KB-1GB)
+max_total_artifacts_bytes: 52428800  # 50MB total (1KB-10GB)
+
+# =============================================================================
+# Input Limits
+# =============================================================================
+
+max_input_bytes: 1048576   # 1MB (1KB-100MB)
+max_code_bytes: 102400     # 100KB (1KB-10MB)
+
+# =============================================================================
+# Docker
+# =============================================================================
+
+docker_image: "code-executor:latest"
+enable_seccomp: true   # Use seccomp profile for syscall filtering
+enable_userns: false   # Run as non-root user (disable if using gosu)
+
+# =============================================================================
+# Container Resource Limits
+# =============================================================================
+
+container_limits:
+  pids_limit: 100       # Max processes (10-1000)
+  nofile_soft: 256      # File descriptors soft limit (64-65536)
+  nofile_hard: 256      # File descriptors hard limit (64-65536)
+  nproc_soft: 50        # Process limit soft (10-1000)
+  nproc_hard: 50        # Process limit hard (10-1000)
+  fsize: 104857600      # Max file size: 100MB (1MB-1GB)
+  tmpfs_size: "100m"    # /tmp size (10m-2g)
+
+# =============================================================================
+# Paths
+# =============================================================================
+
+# data_dir: ~/.tako_vm           # Data directory
+# database_file: ~/.tako_vm/executions.db
+# seccomp_profile_path: null     # Uses built-in profile
+
+# =============================================================================
+# Retry Configuration
+# =============================================================================
+
+max_retry_attempts: 2    # Retries for transient failures (1-10)
+retry_base_delay: 1.0    # Base delay between retries in seconds (0.1-60)
+
+# =============================================================================
+# Retention
+# =============================================================================
+
+execution_record_ttl_days: 30  # Days to keep execution records (1-3650)
+
+# =============================================================================
+# Proxy Network (for network-enabled jobs with allowed_hosts)
+# =============================================================================
+
+proxy_network_name: "tako-proxy"
+proxy_port: 3128
+
+# =============================================================================
+# Job Types
+# =============================================================================
+
+job_types:
+  # Data processing with pandas/numpy
+  - name: data-processing
+    requirements:
+      - pandas
+      - numpy
+    memory_limit: "1g"
+    cpu_limit: 2.0
+    timeout: 60
+
+  # ML inference
+  - name: ml-inference
+    requirements:
+      - numpy
+      - scikit-learn
+    memory_limit: "2g"
+    cpu_limit: 2.0
+    timeout: 120
+
+  # API client with network access
+  - name: api-client
+    requirements:
+      - requests
+      - httpx
+    network_enabled: true
+    allowed_hosts:
+      - "api.openai.com"
+      - "api.anthropic.com"
+    memory_limit: "512m"
+    timeout: 30

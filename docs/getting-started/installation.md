@@ -43,10 +43,10 @@ uv pip install -e ".[dev]"       # With dev dependencies
 The Docker image is required to execute code:
 
 ```bash
-docker build -t code-executor:latest .
+docker build -t code-executor:latest -f docker/Dockerfile.executor .
 ```
 
-This builds the base execution container with Python 3.11.
+This builds the base execution container with Python 3.11 and uv.
 
 ## Verify Installation
 

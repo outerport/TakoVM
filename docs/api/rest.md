@@ -40,7 +40,7 @@ POST /execute
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `code` | string | Yes | Python code to execute |
-| `input_data` | object | Yes | Input data (available at `/input/data.json`) |
+| `input_data` | object | No | Input data (available at `/input/data.json`, defaults to `{}`) |
 | `timeout` | integer | No | Timeout in seconds (default: 30) |
 | `job_type` | string | No | Environment name (default: "default") |
 | `requirements` | array | No | Python packages to install at runtime (e.g., `["pandas", "numpy>=1.20"]`) |
@@ -100,7 +100,7 @@ POST /execute/async
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `code` | string | Yes | Python code to execute |
-| `input_data` | object | Yes | Input data (available at `/input/data.json`) |
+| `input_data` | object | No | Input data (available at `/input/data.json`, defaults to `{}`) |
 | `timeout` | integer | No | Timeout in seconds (default: 30) |
 | `job_type` | string | No | Environment name (default: "default") |
 | `requirements` | array | No | Python packages to install at runtime (e.g., `["pandas", "numpy>=1.20"]`) |
