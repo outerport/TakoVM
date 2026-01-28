@@ -435,3 +435,11 @@ def check_system_health():
 6. **Check correlation ID** - Trace requests through logs
 7. **Monitor circuit breaker** - Check Docker health
 8. **Review DLQ** - Investigate recurring failures
+
+---
+
+## Next Steps
+
+- [Async Jobs](async-jobs.md) - Long-running task patterns
+- [Environments](environments.md) - Configure job types with dependencies
+- [Deployment](../deployment/how-to-deploy.md) - Deploy to production

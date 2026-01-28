@@ -421,3 +421,12 @@ except ExecutionError as e:
     print(f"Execution failed: {e}")
     print(f"Output: {e.stdout}")
 ```
+
+---
+
+## Next Steps
+
+- [REST API](rest.md) - Direct HTTP API access
+- [Environments](../guide/environments.md) - Configure job types
+- [Error Handling](../guide/error-handling.md) - Handle failures gracefully
+- [Deployment](../deployment/how-to-deploy.md) - Deploy to production

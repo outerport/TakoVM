@@ -4,7 +4,7 @@ Complete reference for the Tako VM HTTP API.
 
 ## Base URL
 
-```
+```text
 http://localhost:8000
 ```
 
@@ -31,7 +31,7 @@ http://localhost:8000
 
 Execute code and wait for the result.
 
-```
+```http
 POST /execute
 ```
 
@@ -91,7 +91,7 @@ curl -X POST http://localhost:8000/execute \
 
 Submit code for execution and return immediately.
 
-```
+```http
 POST /execute/async
 ```
 
@@ -143,7 +143,7 @@ If the same `idempotency_key` and payload are submitted again:
 
 Get the current status of a job.
 
-```
+```http
 GET /jobs/{job_id}
 ```
 
@@ -177,7 +177,7 @@ GET /jobs/{job_id}
 
 Wait for job completion and return the result.
 
-```
+```http
 GET /jobs/{job_id}/result
 ```
 
@@ -286,7 +286,7 @@ If `wait=false` and the job is still running:
 
 Rerun a previous execution with the same code and inputs.
 
-```
+```http
 POST /jobs/{job_id}/rerun
 ```
 
@@ -313,7 +313,7 @@ The new job will have:
 
 Fork a job with new code but the same inputs.
 
-```
+```http
 POST /jobs/{job_id}/fork
 ```
 
@@ -356,7 +356,7 @@ The new job will have:
 
 Cancel a pending or running job.
 
-```
+```http
 POST /jobs/{job_id}/cancel
 ```
 
@@ -375,7 +375,7 @@ POST /jobs/{job_id}/cancel
 
 Download an artifact from a completed job.
 
-```
+```http
 GET /jobs/{job_id}/artifacts/{artifact_name}
 ```
 
@@ -418,7 +418,7 @@ curl -O http://localhost:8000/jobs/550e8400-e29b-41d4-a716-446655440000/artifact
 
 Get metadata about an artifact without downloading it.
 
-```
+```http
 HEAD /jobs/{job_id}/artifacts/{artifact_name}
 ```
 
@@ -440,7 +440,7 @@ curl -I http://localhost:8000/jobs/550e8400-e29b-41d4-a716-446655440000/artifact
 
 ### Example Response
 
-```
+```http
 HTTP/1.1 200 OK
 Content-Type: application/json
 Content-Length: 128
@@ -453,7 +453,7 @@ ETag: "sha256:abc123def456..."
 
 Get available execution environments.
 
-```
+```http
 GET /job-types
 ```
 
@@ -488,7 +488,7 @@ GET /job-types
 
 Get a specific environment's configuration.
 
-```
+```http
 GET /job-types/{name}
 ```
 
@@ -512,7 +512,7 @@ GET /job-types/{name}
 
 Explicitly build a job type container image.
 
-```
+```http
 POST /job-types/{name}/build
 ```
 
@@ -540,7 +540,7 @@ POST /job-types/{name}/build
 
 Check server health status.
 
-```
+```http
 GET /health
 ```
 
@@ -588,7 +588,7 @@ GET /health
 
 Get worker pool statistics.
 
-```
+```http
 GET /pool/stats
 ```
 
@@ -609,7 +609,7 @@ GET /pool/stats
 
 List execution records with pagination.
 
-```
+```http
 GET /executions
 ```
 
@@ -658,7 +658,7 @@ Paginated response with metadata:
 
 Get a specific execution record.
 
-```
+```http
 GET /executions/{execution_id}
 ```
 
@@ -680,7 +680,7 @@ Same format as job result. When `?view=full` is specified, includes all extended
 
 Get statistics about failed jobs in the dead letter queue.
 
-```
+```http
 GET /dlq/stats
 ```
 
@@ -702,7 +702,7 @@ GET /dlq/stats
 
 List entries in the dead letter queue.
 
-```
+```http
 GET /dlq
 ```
 
@@ -750,7 +750,7 @@ Paginated response with metadata:
 
 Remove a processed entry from the dead letter queue.
 
-```
+```http
 DELETE /dlq/{entry_id}
 ```
 
@@ -831,3 +831,12 @@ Server error. Includes correlation ID for tracing.
 
 !!! tip
     Use the `correlation_id` to search server logs for debugging.
+
+---
+
+## Next Steps
+
+- [Python SDK](sdk.md) - Use the SDK for type-safe execution
+- [Async Jobs](../guide/async-jobs.md) - Long-running task patterns
+- [Error Handling](../guide/error-handling.md) - Handle failures gracefully
+- [Deployment](../deployment/how-to-deploy.md) - Deploy to production

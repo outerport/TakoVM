@@ -1,16 +1,44 @@
 site_name: Tako VM
-site_description: Secure Python Code Execution System
+site_description: Job queue infrastructure for Python AI agents
 site_url: https://tako-vm.dev
+site_author: Tako VM
+
+repo_url: https://github.com/example/tako-vm
+repo_name: tako-vm
+edit_uri: edit/main/docs/
 
 theme:
   name: material
   palette:
-    primary: indigo
-    accent: indigo
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.tracking
+    - navigation.path
+    - search.suggest
+    - search.highlight
+    - search.share
     - content.code.copy
+    - content.code.select
+    - content.action.edit
+    - content.tabs.link
+    - toc.integrate
 
 nav:
   - Home: index.md
@@ -26,19 +54,46 @@ nav:
   - API Reference:
     - REST API: api/rest.md
     - Python SDK: api/sdk.md
+  - Architecture: architecture.md
   - Deployment:
     - How to Deploy: deployment/how-to-deploy.md
     - Production Setup: deployment/production.md
+    - Scaling: deployment/scaling.md
     - Security: deployment/security.md
+  - Security:
+    - Mitigations: security/mitigations.md
+    - Vulnerability Analysis: security/proc-exposure-vulnerability.md
+  - Comparison: comparison.md
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
 
 markdown_extensions:
+  - toc:
+      permalink: true
+      toc_depth: 3
   - pymdownx.highlight:
       anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.mark
   - admonition
   - tables
+  - attr_list
+  - md_in_html
+  - footnotes
+  - def_list
 
 extra:
   social:

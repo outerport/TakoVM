@@ -271,3 +271,11 @@ When scaling, monitor:
 | 200 jobs/sec | 32 workers + pooling | 32GB RAM, 16 cores |
 | 500 jobs/sec | Distributed (3 nodes) | PostgreSQL, Redis |
 | 1000+ jobs/sec | Distributed + pooling + gVisor | Full cluster |
+
+---
+
+## Next Steps
+
+- [Production Setup](production.md) - Production deployment checklist
+- [Security](security.md) - Hardening for production
+- [Configuration](../getting-started/configuration.md) - Fine-tune settings

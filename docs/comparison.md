@@ -307,3 +307,11 @@ Features:
 | **Deployment** | Docker Compose / single host | Kubernetes + VPC + monitoring | Kubernetes / single host |
 | **Observability** | SQLite + logs | Monitoring collector + metrics | Logs + service health |
 
+---
+
+## Next Steps
+
+- [Quick Start](getting-started/quickstart.md) - Try Tako VM
+- [Architecture](architecture.md) - How Tako VM works
+- [Deployment](deployment/how-to-deploy.md) - Deploy to production
+
