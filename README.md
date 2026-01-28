@@ -47,23 +47,15 @@ Tako VM executes Python code in isolated Docker containers with:
 
 ```mermaid
 flowchart LR
-    subgraph Client
+    subgraph Library Mode
         Sandbox[Sandbox]
-        SDK[TakoVM Client]
     end
 
-    subgraph Server
-        API[FastAPI :8000]
-        Queue[Job Queue]
-        Pool[Worker Pool]
-        DB[(SQLite)]
+    subgraph Server Mode
+        SDK[TakoVM Client] --> API[FastAPI :8000]
+        API --> Queue[Job Queue] --> Pool[Worker Pool]
+        API <--> DB[(SQLite)]
     end
-
-    Container[Docker Container]
-
-    Sandbox -->|direct| Container
-    SDK --> API --> Queue --> Pool --> Container
-    API <--> DB
 ```
 
 **Security layers applied to every container:**
