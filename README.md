@@ -372,7 +372,7 @@ See [docs/api/rest.md](docs/api/rest.md) for complete API reference and [docs/ar
 
 ### Seccomp Profile
 
-Tako VM uses a hardened seccomp profile ([config/seccomp-default.json](config/seccomp-default.json)) that blocks syscalls commonly used in container escape and privilege escalation:
+Tako VM uses a hardened seccomp profile ([tako_vm/seccomp_profile.json](tako_vm/seccomp_profile.json)) that blocks syscalls commonly used in container escape and privilege escalation:
 
 **Blocked syscalls include:**
 - **Privilege escalation**: `setuid`, `setgid`, `setresuid`, `setresgid`, `capset`

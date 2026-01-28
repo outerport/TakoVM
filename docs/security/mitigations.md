@@ -16,7 +16,7 @@ This document provides actionable steps to mitigate the /proc filesystem exposur
 
 ### Implementation
 
-Create a restrictive seccomp profile at `config/seccomp-default.json`:
+The seccomp profile is located at `tako_vm/seccomp_profile.json`:
 
 ```json
 {
@@ -101,7 +101,7 @@ Create a restrictive seccomp profile at `config/seccomp-default.json`:
 # In _run_container method (tako_vm/execution/worker.py)
 
 # Add seccomp profile ALWAYS (not just when enabled)
-seccomp_path = Path(__file__).parent.parent / "config" / "seccomp-default.json"
+seccomp_path = Path(__file__).parent / "seccomp_profile.json"
 if seccomp_path.exists():
     cmd.append(f"--security-opt=seccomp={seccomp_path}")
 else:
@@ -116,7 +116,7 @@ enable_seccomp: bool = True  # Enable by default
 
 # Point to default profile
 seccomp_profile_path: Optional[Path] = Field(
-    default=Path(__file__).parent / "config" / "seccomp-default.json",
+    default=Path(__file__).parent / "seccomp_profile.json",
     description="Path to seccomp profile JSON"
 )
 ```
