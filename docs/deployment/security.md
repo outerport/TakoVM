@@ -47,12 +47,9 @@ For jobs that need network (e.g., API calls), configure per job type:
 job_types:
   - name: api-client
     network_enabled: true
-    allowed_hosts:
-      - "api.openai.com"
-      - "*.amazonaws.com"
 ```
 
-The `allowed_hosts` field is advisory by default. For enforcement, set up the egress proxy (see `scripts/proxy/`).
+When `network_enabled: true`, containers can access any external host. For strict egress control, use external firewalls or Kubernetes NetworkPolicy.
 
 ### Read-Only Filesystem
 
@@ -399,7 +396,7 @@ This separates the API server from the execution environment entirely, but adds 
 - [ ] Use HTTPS in production
 - [ ] Set appropriate resource limits
 - [ ] Keep Docker updated
-- [ ] For network-enabled jobs, use `allowed_hosts` to restrict domains
+- [ ] Minimize use of `network_enabled: true` jobs
 - [ ] Monitor for anomalies
 - [ ] Review execution logs
 - [ ] Test security controls regularly

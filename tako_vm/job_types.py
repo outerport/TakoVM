@@ -54,10 +54,6 @@ class JobType:
     network_enabled: bool = False
     """Allow network access (default: no network for security)."""
 
-    allowed_hosts: list[str] = field(default_factory=list)
-    """Allowlist of hosts/domains container can reach (e.g., ['api.openai.com', '*.amazonaws.com']).
-    Requires egress proxy setup. Empty list with network_enabled=True allows all hosts."""
-
     @property
     def image_name(self) -> str:
         """Docker image name for this job type."""
@@ -76,7 +72,6 @@ class JobType:
             "cpu_limit": self.cpu_limit,
             "timeout": self.timeout,
             "network_enabled": self.network_enabled,
-            "allowed_hosts": self.allowed_hosts,
         }
 
     @classmethod

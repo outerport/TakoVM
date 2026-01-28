@@ -50,12 +50,6 @@ retry_base_delay: 1.0     # Base delay between retries (seconds)
 queue_wait_timeout: 1.0   # Queue wait timeout (seconds)
 
 # ==============================================================================
-# PROXY CONFIGURATION (for network-enabled jobs)
-# ==============================================================================
-proxy_network_name: tako-proxy  # Docker network name
-proxy_port: 3128               # Proxy port
-
-# ==============================================================================
 # CONTAINER SECURITY
 # ==============================================================================
 docker_image: code-executor:latest
@@ -90,9 +84,6 @@ job_types:
     memory_limit: "256m"
     timeout: 30
     network_enabled: true
-    allowed_hosts:
-      - "api.openai.com"
-      - "*.amazonaws.com"
 
 # ==============================================================================
 # OTHER
@@ -154,7 +145,6 @@ Job types define pre-configured execution environments:
 | `cpu_limit` | CPU cores | `1.0` |
 | `timeout` | Default timeout | `30` |
 | `network_enabled` | Allow network | `false` |
-| `allowed_hosts` | Domain allowlist | `[]` |
 
 When you define a job type, Tako VM builds a Docker image with the specified packages pre-installed (`tako-vm-{name}:latest`).
 
@@ -226,8 +216,6 @@ container_limits:
 | `log_level` | Logging level | `INFO` |
 | `server_host` | Server bind host | `0.0.0.0` |
 | `server_port` | Server bind port | `8000` |
-| `proxy_network_name` | Docker network for proxy | `tako-proxy` |
-| `proxy_port` | Proxy port number | `3128` |
 | `max_retry_attempts` | Max retries for transient failures | `2` |
 | `retry_base_delay` | Base delay between retries (seconds) | `1.0` |
 | `queue_wait_timeout` | Queue wait timeout (seconds) | `1.0` |

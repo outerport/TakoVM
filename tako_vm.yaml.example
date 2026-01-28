@@ -90,13 +90,6 @@ retry_base_delay: 1.0    # Base delay between retries in seconds (0.1-60)
 execution_record_ttl_days: 30  # Days to keep execution records (1-3650)
 
 # =============================================================================
-# Proxy Network (for network-enabled jobs with allowed_hosts)
-# =============================================================================
-
-proxy_network_name: "tako-proxy"
-proxy_port: 3128
-
-# =============================================================================
 # Job Types
 # =============================================================================
 
@@ -125,8 +118,5 @@ job_types:
       - requests
       - httpx
     network_enabled: true
-    allowed_hosts:
-      - "api.openai.com"
-      - "api.anthropic.com"
     memory_limit: "512m"
     timeout: 30

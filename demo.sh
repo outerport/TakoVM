@@ -184,6 +184,5 @@ print -P "
 %F{cyan}Next steps:%f
   - Try job types: data-processing, ml-inference, api-client
   - Production mode: production_mode: true
-  - Configure allowed_hosts for network-enabled jobs
   - Check /health endpoint for circuit breaker status
 "

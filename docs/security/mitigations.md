@@ -190,7 +190,6 @@ def _prepare_config_file(self, job_type: JobType, input_dir: Path) -> None:
     if job_type.environment:
         config_data = {
             "environment": job_type.environment,
-            "allowed_hosts": job_type.allowed_hosts if job_type.allowed_hosts else [],
         }
 
         config_file = input_dir / "_config.json"

@@ -45,9 +45,6 @@ job_types:
     memory_limit: "256m"
     timeout: 30
     network_enabled: true
-    allowed_hosts:
-      - "api.openai.com"
-      - "*.amazonaws.com"
 ```
 
 ## Using a Job Type
@@ -91,7 +88,6 @@ print(response.json()["output"])
 | `cpu_limit` | CPU cores | `1.0` |
 | `timeout` | Default timeout (seconds) | `30` |
 | `network_enabled` | Allow outbound network | `false` |
-| `allowed_hosts` | Domain allowlist | `[]` |
 | `environment` | Environment variables | `{}` |
 | `shared_code` | Python files to include | `[]` |
 
@@ -105,13 +101,9 @@ job_types:
     requirements:
       - requests
     network_enabled: true           # Enable network
-    allowed_hosts:                  # Restrict to specific domains
-      - "api.openai.com"
-      - "api.anthropic.com"
-      - "*.amazonaws.com"
 ```
 
-**Note:** The `allowed_hosts` field is advisory by default. For enforcement, set up the egress proxy (see `scripts/proxy/`).
+When `network_enabled: true`, containers can access any external host. For strict egress control in production, use external firewalls or Kubernetes NetworkPolicy.
 
 ## List Job Types
 

@@ -22,9 +22,8 @@ from tako_vm.models import (
 )
 from tako_vm.security import (
     cap_output, sanitize_error, classify_error, compute_file_hash,
-    validate_env_key, validate_env_value, validate_docker_network_name,
-    sanitize_allowed_hosts, is_safe_filename, validate_pip_requirement,
-    validate_docker_image
+    validate_env_key, validate_env_value, is_safe_filename,
+    validate_pip_requirement, validate_docker_image
 )
 from tako_vm.config import get_config, TakoVMConfig
 from tako_vm.execution.health import get_circuit_breaker
@@ -606,55 +605,7 @@ class CodeExecutor:
 
         # Network isolation (default: no network for security)
         if job_type.network_enabled:
-            if job_type.allowed_hosts:
-                # Allowlist configured - check if proxy network exists
-                proxy_network = self.config.proxy_network_name
-                proxy_port = self.config.proxy_port
-
-                # Validate proxy network name to prevent injection
-                if not validate_docker_network_name(proxy_network):
-                    logger.error(f"Invalid proxy network name: {proxy_network}")
-                    return {
-                        "success": False,
-                        "error": "Invalid proxy network configuration",
-                        "stdout": "",
-                        "stderr": "Proxy network name contains invalid characters",
-                        "exit_code": -1
-                    }
-
-                proxy_check = subprocess.run(
-                    ["docker", "network", "inspect", proxy_network],
-                    capture_output=True,
-                    check=False
-                )
-                if proxy_check.returncode == 0:
-                    # Proxy network exists - use it for enforcement
-                    cmd.append(f"--network={proxy_network}")
-
-                    # Sanitize allowed hosts to prevent injection
-                    safe_hosts = sanitize_allowed_hosts(job_type.allowed_hosts)
-                    if safe_hosts:
-                        allowed_hosts_str = ",".join(safe_hosts)
-                        cmd.append(f"--env=TAKO_ALLOWED_HOSTS={allowed_hosts_str}")
-                    else:
-                        logger.warning(
-                            f"Job type '{job_type.name}' has allowed_hosts but none are valid"
-                        )
-
-                    cmd.append(f"--env=HTTP_PROXY=http://{proxy_network}:{proxy_port}")
-                    cmd.append(f"--env=HTTPS_PROXY=http://{proxy_network}:{proxy_port}")
-                    cmd.append("--env=NO_PROXY=localhost,127.0.0.1")
-                else:
-                    # Proxy not configured - warn and use bridge (no enforcement)
-                    logger.warning(
-                        f"Job type '{job_type.name}' has allowed_hosts configured but "
-                        f"{proxy_network} network not found. Network access is UNRESTRICTED. "
-                        "Set up egress proxy for enforcement: scripts/proxy/docker-compose.yaml"
-                    )
-                    cmd.append("--network=bridge")
-            else:
-                # No allowlist - unrestricted network access
-                cmd.append("--network=bridge")
+            cmd.append("--network=bridge")
         elif needs_network_for_deps:
             # Runtime deps need network access even if job wants isolation
             cmd.append("--network=bridge")

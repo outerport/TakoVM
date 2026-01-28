@@ -107,7 +107,6 @@ class JobTypeConfig(BaseModel):
     cpu_limit: float = Field(default=1.0, ge=0.1, le=16.0)
     timeout: int = Field(default=30, ge=1, le=3600)
     network_enabled: bool = Field(default=False, description="Allow network access (security risk)")
-    allowed_hosts: List[str] = Field(default_factory=list, description="Allowlist of hosts container can reach (requires proxy)")
 
     @field_validator('name')
     @classmethod
@@ -153,10 +152,6 @@ class TakoVMConfig(BaseModel):
     # Server
     server_host: str = Field(default="0.0.0.0", description="Server host to bind to")
     server_port: int = Field(default=8000, ge=1, le=65535, description="Server port to bind to")
-
-    # Proxy network configuration (for network-enabled jobs)
-    proxy_network_name: str = Field(default="tako-proxy", description="Docker network name for proxy")
-    proxy_port: int = Field(default=3128, ge=1, le=65535, description="Proxy port number")
 
     # Retry configuration
     max_retry_attempts: int = Field(default=2, ge=1, le=10, description="Maximum retry attempts for transient failures")

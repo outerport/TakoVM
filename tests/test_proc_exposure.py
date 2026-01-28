@@ -27,8 +27,6 @@ class TestProcExposure:
 
         VULNERABILITY: User code can access all environment variables including:
         - TAKO_REQUIREMENTS (dependency list)
-        - TAKO_ALLOWED_HOSTS (network allowlist)
-        - HTTP_PROXY, HTTPS_PROXY (proxy config)
         - Custom job_type.environment variables
         """
         code = """
