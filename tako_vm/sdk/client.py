@@ -25,7 +25,7 @@ Provides a typed interface for executing functions in isolated containers:
 import inspect
 import textwrap
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
-from typing import Callable, Optional, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Optional, Type, TypeVar, get_type_hints
 
 import requests
 
@@ -38,7 +38,7 @@ OutputT = TypeVar('OutputT')
 class ExecutionResult:
     """Result of a function execution."""
     success: bool
-    output: any
+    output: Any
     execution_time: float
     stdout: str
     stderr: str

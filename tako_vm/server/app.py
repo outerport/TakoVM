@@ -619,7 +619,7 @@ async def execute_code(request: ExecuteRequest):
     Execute Python code synchronously (legacy endpoint).
 
     The code runs in an isolated container with:
-    - No network access
+    - No network access by default (configurable via job type)
     - Read-only filesystem (except /output and /tmp)
     - Configurable resource limits
     - Configurable timeout

@@ -28,7 +28,7 @@ class JobType:
     """Unique identifier for this job type."""
 
     requirements: list[str] = field(default_factory=list)
-    """Python packages to install (pip install)."""
+    """Python packages to install (via uv pip install at runtime)."""
 
     python_version: str = "3.11"
     """Python version to use."""

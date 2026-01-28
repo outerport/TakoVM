@@ -2,9 +2,10 @@
 Tako VM - Secure Code Execution System
 
 Core modules:
-- api_server: FastAPI HTTP server with async job queue
-- worker: Docker container execution orchestrator
-- tako_vm: Typed Python SDK for function execution
+- server: FastAPI HTTP server with async job queue (server/app.py, server/queue.py)
+- execution: Docker container execution orchestrator (execution/worker.py, execution/builder.py)
+- sdk: Typed Python SDK for function execution (sdk/client.py)
+- sandbox: Direct Docker execution without a server
 - job_types: Execution environment configuration
 - models: ExecutionRecord and other data models
 - config: Configuration management
