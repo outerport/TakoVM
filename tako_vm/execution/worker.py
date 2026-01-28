@@ -9,7 +9,6 @@ import json
 import subprocess
 import tempfile
 import shutil
-import hashlib
 from pathlib import Path
 import time
 import logging
