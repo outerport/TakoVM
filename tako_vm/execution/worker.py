@@ -43,6 +43,47 @@ from tako_vm.security import (
 
 logger = logging.getLogger(__name__)
 
+# Cache for runtime availability check
+_gvisor_available: Optional[bool] = None
+
+
+def check_gvisor_available() -> bool:
+    """
+    Check if gVisor (runsc) runtime is available.
+
+    Returns:
+        True if gVisor is installed and configured as a Docker runtime
+    """
+    global _gvisor_available
+    if _gvisor_available is not None:
+        return _gvisor_available
+
+    try:
+        # Check if runsc binary exists
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.Runtimes}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        _gvisor_available = result.returncode == 0 and "runsc" in result.stdout
+        return _gvisor_available
+    except Exception as e:
+        logger.warning(f"Failed to check gVisor availability: {e}")
+        _gvisor_available = False
+        return False
+
+
+def reset_gvisor_check() -> None:
+    """Reset gVisor availability cache (for testing)."""
+    global _gvisor_available
+    _gvisor_available = None
+
+
+class RuntimeUnavailableError(Exception):
+    """Raised when the required container runtime is not available."""
+
+
 # Workspace directory for job files (can be set via TAKO_VM_WORKSPACE env var)
 # When running the server in a container with Docker socket mounted, this must
 # be a path that exists on the host and is mounted into the server container.
@@ -98,10 +139,14 @@ def parse_phase_file(output_dir: Path) -> Optional[ExecutionTiming]:
         # Parse timing values
         timing = ExecutionTiming(
             startup_ms=int(data.get("startup_ms", 0)) if data.get("startup_ms") else None,
-            dep_install_ms=int(data.get("dep_install_ms", 0)) if data.get("dep_install_ms") else None,
+            dep_install_ms=int(data.get("dep_install_ms", 0))
+            if data.get("dep_install_ms")
+            else None,
             execution_ms=int(data.get("execution_ms", 0)) if data.get("execution_ms") else None,
             total_ms=int(data.get("total_ms", 0)) if data.get("total_ms") else None,
-            phase_at_exit=data.get("phase") if data.get("phase") in ("startup", "execution", "completed", "failed") else None,
+            phase_at_exit=data.get("phase")
+            if data.get("phase") in ("startup", "execution", "completed", "failed")
+            else None,
             dep_install_started=data.get("dep_install_started", "false").lower() == "true",
         )
 
@@ -166,11 +211,67 @@ class CodeExecutor:
             default_timeout: Default timeout in seconds for executions
             registry: Job type registry for looking up job types
             config: Configuration (uses global config if not provided)
+
+        Raises:
+            RuntimeUnavailableError: If gVisor is required but not available
         """
         self.docker_image = docker_image
         self.default_timeout = default_timeout
         self.registry = registry or JobTypeRegistry()
         self.config = config or get_config()
+
+        # Check runtime availability
+        self._runtime = self._resolve_runtime()
+
+    def _resolve_runtime(self) -> str:
+        """
+        Resolve the container runtime to use.
+
+        In strict mode (default), gVisor must be available or we fail.
+        In permissive mode, we fall back to runc with a warning.
+
+        Returns:
+            The runtime to use ('runsc' or 'runc')
+
+        Raises:
+            RuntimeUnavailableError: If strict mode and gVisor unavailable
+        """
+        requested_runtime = self.config.container_runtime
+        security_mode = self.config.security_mode
+
+        # If runc is explicitly requested, allow it (user knows what they're doing)
+        if requested_runtime == "runc":
+            if security_mode == "strict":
+                raise RuntimeUnavailableError(
+                    "Cannot use 'runc' runtime in strict security mode. "
+                    "Use container_runtime='runsc' or set security_mode='permissive'."
+                )
+            logger.warning(
+                "Using 'runc' runtime. This provides weaker isolation than gVisor. "
+                "DO NOT USE FOR UNTRUSTED CODE."
+            )
+            return "runc"
+
+        # gVisor requested (default) - check availability
+        if check_gvisor_available():
+            logger.info("Using gVisor (runsc) runtime for strong isolation")
+            return "runsc"
+
+        # gVisor not available
+        if security_mode == "strict":
+            raise RuntimeUnavailableError(
+                "gVisor (runsc) runtime is not available but required in strict mode. "
+                "Install gVisor: https://gvisor.dev/docs/user_guide/install/ "
+                "Or set security_mode='permissive' to allow fallback to runc (NOT RECOMMENDED)."
+            )
+
+        # Permissive mode - fall back to runc with loud warning
+        logger.warning("=" * 60)
+        logger.warning("WARNING: gVisor not available, falling back to runc")
+        logger.warning("WARNING: This provides WEAKER ISOLATION")
+        logger.warning("WARNING: DO NOT USE FOR UNTRUSTED CODE")
+        logger.warning("=" * 60)
+        return "runc"
 
     def _get_job_type(self, job_type_name: Optional[str]) -> JobType:
         """
@@ -713,6 +814,7 @@ class CodeExecutor:
             "docker",
             "run",
             "--rm",
+            f"--runtime={self._runtime}",
             "--init",  # Faster signal handling with tini
             "--read-only",
             "--cap-drop=ALL",

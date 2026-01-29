@@ -21,6 +21,8 @@ docker/
 
 ## Key Concepts
 
+- **gVisor by default**: Uses `runsc` runtime for strong isolation (userspace kernel). Required in `strict` mode.
+- **Security modes**: `strict` (default) fails if gVisor unavailable; `permissive` allows fallback to runc
 - **Runtime deps**: Dependencies installed via `uv pip install` at container startup (fast!)
 - **ExecutionRecord** status: `queued`, `running`, `succeeded`, `failed`, `timeout`, `oom`, `cancelled`
 - **ExecutionRecord.timing**: Phase breakdown (startup, execution durations) from `/output/.tako_phase`
@@ -32,11 +34,14 @@ docker/
 ## Build & Test
 
 ```bash
+# One-time: install gVisor (required for production)
+# See: https://gvisor.dev/docs/user_guide/install/
+
 # One-time: build executor image
 docker build -t code-executor:latest -f docker/Dockerfile.executor .
 
-# Run tests
-pytest tests/ -v
+# Run tests (use permissive mode if gVisor not installed)
+TAKO_VM_SECURITY_MODE=permissive pytest tests/ -v
 
 # Start server
 tako-vm server --port 8000
@@ -57,6 +62,7 @@ tako-vm build job-type data-processing
 
 ## Common Issues
 
+- **RuntimeUnavailableError: gVisor not available** -> Install gVisor: https://gvisor.dev/docs/user_guide/install/ or set `security_mode: permissive` for dev
 - **ImageNotFound: code-executor:latest** -> Build image first (see above)
 - **sqlite3.OperationalError: no such column** -> Delete `~/.tako_vm/executions.db` (schema changed)
 - **Test isolation** -> Use `reset_config()` and temp database pattern from `tests/test_api.py`

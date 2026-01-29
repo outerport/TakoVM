@@ -289,6 +289,17 @@ job_types:
     network_enabled: false  # True isolation now possible
 ```
 
+### Custom Libraries
+
+For internal/proprietary packages not on PyPI, drop `.whl` files into `tako_vm/custom_libs/` and rebuild the executor image:
+
+```bash
+cp your_lib-1.0.0-py3-none-any.whl tako_vm/custom_libs/
+docker build -t code-executor:latest -f docker/Dockerfile.executor .
+```
+
+See [Custom Libraries](docs/guide/custom-libraries.md) for details.
+
 ## API Usage
 
 ### Execute Code

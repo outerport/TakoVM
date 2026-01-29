@@ -228,6 +228,38 @@ class TakoVMConfig(BaseModel):
     # If you're using an image without gosu, set this to True
     enable_userns: bool = Field(default=False)
 
+    # Container runtime (gVisor by default for strong isolation)
+    container_runtime: str = Field(
+        default="runsc",
+        description="Container runtime: 'runsc' (gVisor) for strong isolation, 'runc' for standard Docker",
+    )
+
+    # Security mode
+    security_mode: str = Field(
+        default="strict",
+        description="Security mode: 'strict' fails if gVisor unavailable, 'permissive' allows fallback to runc",
+    )
+
+    @field_validator("container_runtime")
+    @classmethod
+    def validate_container_runtime(cls, v: str) -> str:
+        """Validate container runtime."""
+        valid_runtimes = {"runsc", "runc"}
+        if v not in valid_runtimes:
+            raise ValueError(
+                f"container_runtime must be one of: {', '.join(sorted(valid_runtimes))}"
+            )
+        return v
+
+    @field_validator("security_mode")
+    @classmethod
+    def validate_security_mode(cls, v: str) -> str:
+        """Validate security mode."""
+        valid_modes = {"strict", "permissive"}
+        if v not in valid_modes:
+            raise ValueError(f"security_mode must be one of: {', '.join(sorted(valid_modes))}")
+        return v
+
     # Container limits (new!)
     container_limits: ContainerLimits = Field(default_factory=ContainerLimits)
 
@@ -368,11 +400,15 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
             if loaded:
                 config_dict = loaded
 
-    # Apply env var overrides for paths
+    # Apply env var overrides
     if "TAKO_VM_DATA_DIR" in os.environ:
         config_dict["data_dir"] = os.environ["TAKO_VM_DATA_DIR"]
     if "TAKO_VM_DATABASE_FILE" in os.environ:
         config_dict["database_file"] = os.environ["TAKO_VM_DATABASE_FILE"]
+    if "TAKO_VM_SECURITY_MODE" in os.environ:
+        config_dict["security_mode"] = os.environ["TAKO_VM_SECURITY_MODE"].lower()
+    if "TAKO_VM_CONTAINER_RUNTIME" in os.environ:
+        config_dict["container_runtime"] = os.environ["TAKO_VM_CONTAINER_RUNTIME"].lower()
 
     # Validate and create config
     try:

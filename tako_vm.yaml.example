@@ -48,12 +48,21 @@ max_input_bytes: 1048576   # 1MB (1KB-100MB)
 max_code_bytes: 102400     # 100KB (1KB-10MB)
 
 # =============================================================================
-# Docker
+# Docker & Security
 # =============================================================================
 
 docker_image: "code-executor:latest"
 enable_seccomp: true   # Use seccomp profile for syscall filtering
 enable_userns: false   # Run as non-root user (disable if using gosu)
+
+# Container runtime: 'runsc' (gVisor) for strong isolation, 'runc' for standard Docker
+# gVisor is REQUIRED by default for running untrusted code
+container_runtime: runsc
+
+# Security mode:
+# - 'strict' (default): Fails if gVisor is unavailable. Use this for production.
+# - 'permissive': Falls back to runc with warnings. ONLY for local development.
+security_mode: strict
 
 # =============================================================================
 # Container Resource Limits

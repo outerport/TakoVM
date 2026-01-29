@@ -50,6 +50,7 @@ nav:
     - Basic Execution: guide/basic-execution.md
     - Async Jobs: guide/async-jobs.md
     - Environments: guide/environments.md
+    - Custom Libraries: guide/custom-libraries.md
     - Error Handling: guide/error-handling.md
   - API Reference:
     - REST API: api/rest.md
