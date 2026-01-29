@@ -53,6 +53,44 @@ class ResourceUsage(BaseModel):
     """Wall clock duration in milliseconds."""
 
 
+# Execution phases
+ExecutionPhase = Literal[
+    "startup",  # Container starting, deps installing
+    "execution",  # User code running
+    "completed",  # Finished successfully
+    "failed",  # Failed during some phase
+]
+
+
+class ExecutionTiming(BaseModel):
+    """
+    Timing breakdown for execution phases.
+
+    Separates startup time (container + dep install) from actual code execution,
+    allowing users to understand where time is spent and which phase timed out.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    startup_ms: Optional[int] = Field(default=None, ge=0, le=86400000)
+    """Time spent in startup phase (container init + dep install) in milliseconds."""
+
+    dep_install_ms: Optional[int] = Field(default=None, ge=0, le=86400000)
+    """Time spent installing dependencies in milliseconds (subset of startup)."""
+
+    execution_ms: Optional[int] = Field(default=None, ge=0, le=86400000)
+    """Time spent executing user code in milliseconds."""
+
+    total_ms: Optional[int] = Field(default=None, ge=0, le=86400000)
+    """Total container runtime in milliseconds."""
+
+    phase_at_exit: Optional[ExecutionPhase] = None
+    """Which phase the container was in when it exited/was killed."""
+
+    dep_install_started: bool = False
+    """Whether dependency installation was attempted."""
+
+
 class InputArtifact(BaseModel):
     """Input artifact metadata for file-based inputs (e.g., SVG source files)."""
 
@@ -117,8 +155,11 @@ class Artifact(BaseModel):
 
 # Canonical error type values (from security.classify_error)
 ErrorType = Literal[
+    # Timeout errors (phase-specific)
+    "timeout",  # Generic execution exceeded time limit (legacy)
+    "startup_timeout",  # Startup phase (dep install) exceeded time limit
+    "execution_timeout",  # Code execution phase exceeded time limit
     # Signal-based errors
-    "timeout",  # Execution exceeded time limit
     "oom",  # Out of memory (SIGKILL/137)
     "cancelled",  # Cancelled by user (SIGTERM/143)
     "segfault",  # Segmentation fault (SIGSEGV/139)
@@ -172,6 +213,9 @@ class ExecutionError(BaseModel):
 
     message: str = Field(..., min_length=1, max_length=4096)
     """Sanitized error message (no sensitive paths)."""
+
+    phase: Optional[ExecutionPhase] = None
+    """Which phase the error occurred in (startup or execution)."""
 
 
 # Canonical job status values
@@ -307,6 +351,10 @@ class ExecutionRecord(BaseModel):
     # Resources
     resource_usage: Optional[ResourceUsage] = None
     """Resource consumption metrics."""
+
+    # Timing breakdown
+    timing: Optional[ExecutionTiming] = None
+    """Detailed timing breakdown by execution phase."""
 
     # Output artifacts
     artifacts: List[Artifact] = Field(default_factory=list)

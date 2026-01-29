@@ -17,6 +17,7 @@ from .models import (
     DeadLetterEntry,
     ExecutionError,
     ExecutionRecord,
+    ExecutionTiming,
     InputArtifact,
     JobVersion,
     ResourceUsage,
@@ -64,6 +65,8 @@ CREATE TABLE IF NOT EXISTS execution_records (
     max_rss_mb REAL,
     cpu_time_ms INTEGER,
     wall_time_ms INTEGER,
+
+    timing_json TEXT,
 
     artifacts_json TEXT,
     error_json TEXT,
@@ -119,6 +122,11 @@ CREATE INDEX IF NOT EXISTS idx_dlq_error_type ON dead_letter_queue(error_type);
 CREATE INDEX IF NOT EXISTS idx_dlq_job_id ON dead_letter_queue(job_id);
 """
 
+# Migration: Add timing_json column if it doesn't exist (for existing databases)
+MIGRATION_TIMING_SQL = """
+ALTER TABLE execution_records ADD COLUMN timing_json TEXT;
+"""
+
 
 class ExecutionStorage:
     """
@@ -146,6 +154,9 @@ class ExecutionStorage:
             conn = self._get_connection()
             conn.executescript(SCHEMA_SQL)
             conn.commit()
+
+            # Run migrations for existing databases
+            self._run_migrations(conn)
         except Exception:
             # Close connection on error to prevent leaks
             if conn:
@@ -155,6 +166,22 @@ class ExecutionStorage:
                     pass
                 self._conn = None
             raise
+
+    def _run_migrations(self, conn: sqlite3.Connection) -> None:
+        """Run database migrations for schema updates."""
+        # Check if timing_json column exists
+        cursor = conn.execute("PRAGMA table_info(execution_records)")
+        columns = {row["name"] for row in cursor.fetchall()}
+
+        if "timing_json" not in columns:
+            try:
+                conn.execute(MIGRATION_TIMING_SQL)
+                conn.commit()
+                logger.info("Migration: Added timing_json column to execution_records")
+            except sqlite3.OperationalError as e:
+                # Column might already exist if migration ran partially
+                if "duplicate column" not in str(e).lower():
+                    raise
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create database connection."""
@@ -182,6 +209,7 @@ class ExecutionStorage:
         input_artifacts_json = json.dumps([a.model_dump() for a in record.input_artifacts])
         error_json = json.dumps(record.error.model_dump()) if record.error else None
         result_json = json.dumps(record.result_json) if record.result_json else None
+        timing_json = json.dumps(record.timing.model_dump()) if record.timing else None
 
         with self._lock:
             conn = self._get_connection()
@@ -195,9 +223,10 @@ class ExecutionStorage:
                 input_artifacts_json,
                 exit_code, stdout, stderr, stdout_truncated, stderr_truncated, result_json,
                 max_rss_mb, cpu_time_ms, wall_time_ms,
+                timing_json,
                 artifacts_json, error_json,
                 client_ip, parent_execution_id, relationship
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
                 (
                     record.execution_id,
@@ -229,6 +258,7 @@ class ExecutionStorage:
                     resource_usage.max_rss_mb if resource_usage else None,
                     resource_usage.cpu_time_ms if resource_usage else None,
                     resource_usage.wall_time_ms if resource_usage else None,
+                    timing_json,
                     artifacts_json,
                     error_json,
                     record.client_ip,
@@ -391,6 +421,16 @@ class ExecutionStorage:
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning("Failed to parse result_json for %s: %s", row["execution_id"], e)
 
+        # Parse timing with error handling
+        timing = None
+        timing_json_col = row["timing_json"] if "timing_json" in row.keys() else None
+        if timing_json_col:
+            try:
+                timing_data = json.loads(timing_json_col)
+                timing = ExecutionTiming(**timing_data)
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.warning("Failed to parse timing_json for %s: %s", row["execution_id"], e)
+
         # Handle optional new columns with defaults
         job_ref = row["job_ref"] if "job_ref" in row.keys() else f"{row['job_type']}@latest"
         queued_at_str = row["queued_at"] if "queued_at" in row.keys() else row["created_at"]
@@ -432,6 +472,7 @@ class ExecutionStorage:
             else False,
             result_json=result_json,
             resource_usage=resource_usage,
+            timing=timing,
             artifacts=artifacts,
             error=error,
             client_ip=row["client_ip"],

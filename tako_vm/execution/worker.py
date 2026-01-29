@@ -23,6 +23,7 @@ from tako_vm.models import (
     Artifact,
     ExecutionError,
     ExecutionRecord,
+    ExecutionTiming,
     InputArtifact,
     ResourceUsage,
     sha256_content,
@@ -62,6 +63,89 @@ DEFAULT_JOB_TYPE = JobType(
     cpu_limit=1.0,
     timeout=30,
 )
+
+
+def parse_phase_file(output_dir: Path) -> Optional[ExecutionTiming]:
+    """
+    Parse the phase tracking file written by entrypoint.sh.
+
+    The phase file contains key=value pairs tracking execution phases:
+    - phase: current/final phase (startup, execution, completed, failed)
+    - startup_ms: time spent in startup phase
+    - dep_install_ms: time spent installing dependencies
+    - execution_ms: time spent executing user code
+    - total_ms: total container runtime
+    - failed_phase: which phase failed (if phase=failed)
+
+    Args:
+        output_dir: Path to output directory containing .tako_phase file
+
+    Returns:
+        ExecutionTiming with parsed timing info, or None if file not found
+    """
+    phase_file = output_dir / ".tako_phase"
+    if not phase_file.exists():
+        return None
+
+    try:
+        content = phase_file.read_text(encoding="utf-8")
+        data = {}
+        for line in content.strip().split("\n"):
+            if "=" in line:
+                key, value = line.split("=", 1)
+                data[key.strip()] = value.strip()
+
+        # Parse timing values
+        timing = ExecutionTiming(
+            startup_ms=int(data.get("startup_ms", 0)) if data.get("startup_ms") else None,
+            dep_install_ms=int(data.get("dep_install_ms", 0)) if data.get("dep_install_ms") else None,
+            execution_ms=int(data.get("execution_ms", 0)) if data.get("execution_ms") else None,
+            total_ms=int(data.get("total_ms", 0)) if data.get("total_ms") else None,
+            phase_at_exit=data.get("phase") if data.get("phase") in ("startup", "execution", "completed", "failed") else None,
+            dep_install_started=data.get("dep_install_started", "false").lower() == "true",
+        )
+
+        # If phase is "failed", check which phase failed
+        if data.get("phase") == "failed" and data.get("failed_phase"):
+            timing.phase_at_exit = data.get("failed_phase")
+
+        return timing
+
+    except Exception as e:
+        logger.warning(f"Failed to parse phase file: {e}")
+        return None
+
+
+def determine_timeout_phase(timing: Optional[ExecutionTiming], timed_out: bool) -> Optional[str]:
+    """
+    Determine which phase timed out based on timing data.
+
+    Args:
+        timing: ExecutionTiming from phase file
+        timed_out: Whether the job timed out
+
+    Returns:
+        "startup" or "execution" or None
+    """
+    if not timed_out:
+        return None
+
+    if timing is None:
+        return None  # Can't determine without timing data
+
+    # If we have execution timing, we made it past startup
+    if timing.execution_ms is not None and timing.execution_ms > 0:
+        return "execution"
+
+    # If we have startup timing but no execution, we timed out during startup
+    if timing.startup_ms is not None:
+        return "startup"
+
+    # Check phase_at_exit
+    if timing.phase_at_exit in ("startup", "execution"):
+        return timing.phase_at_exit
+
+    return None
 
 
 class CodeExecutor:
@@ -370,15 +454,50 @@ class CodeExecutor:
                 except json.JSONDecodeError:
                     pass
 
-            # Determine final status
+            # Parse phase timing file (written by entrypoint.sh)
+            timing = parse_phase_file(output_dir)
+            record.timing = timing
+
+            # Determine which phase timed out (if applicable)
+            timeout_phase = determine_timeout_phase(timing, timed_out)
+
+            # Determine final status with phase-aware timeout handling
             if timed_out:
                 record.status = "timeout"
-                record.error = ExecutionError(
-                    type="timeout", message=f"Execution exceeded time limit ({timeout}s)"
-                )
+                if timeout_phase == "startup":
+                    startup_time = timing.startup_ms if timing else None
+                    time_info = f" (startup took {startup_time}ms)" if startup_time else ""
+                    record.error = ExecutionError(
+                        type="startup_timeout",
+                        message=f"Startup phase exceeded time limit ({timeout}s){time_info}",
+                        phase="startup",
+                    )
+                elif timeout_phase == "execution":
+                    exec_time = timing.execution_ms if timing else None
+                    startup_time = timing.startup_ms if timing else None
+                    time_info = ""
+                    if startup_time and exec_time:
+                        time_info = f" (startup: {startup_time}ms, execution: {exec_time}ms)"
+                    record.error = ExecutionError(
+                        type="execution_timeout",
+                        message=f"Code execution exceeded time limit ({timeout}s){time_info}",
+                        phase="execution",
+                    )
+                else:
+                    # Fallback to generic timeout if we can't determine phase
+                    record.error = ExecutionError(
+                        type="timeout",
+                        message=f"Execution exceeded time limit ({timeout}s)",
+                        phase=timing.phase_at_exit if timing else None,
+                    )
             elif result.get("exit_code") == 137:
                 record.status = "oom"
-                record.error = ExecutionError(type="oom", message="Execution exceeded memory limit")
+                phase = timing.phase_at_exit if timing else None
+                record.error = ExecutionError(
+                    type="oom",
+                    message="Execution exceeded memory limit",
+                    phase=phase,
+                )
             elif result.get("success"):
                 record.status = "succeeded"
             else:
@@ -386,7 +505,8 @@ class CodeExecutor:
                 error_type, error_msg = classify_error(
                     result.get("exit_code", 1), result.get("stderr", ""), timed_out
                 )
-                record.error = ExecutionError(type=error_type, message=error_msg)
+                phase = timing.phase_at_exit if timing else None
+                record.error = ExecutionError(type=error_type, message=error_msg, phase=phase)
 
             return record
 

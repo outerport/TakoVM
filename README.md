@@ -361,6 +361,78 @@ curl http://localhost:8000/jobs/{job_id}/artifacts/result.json
 curl http://localhost:8000/jobs/{job_id}/result?view=full
 ```
 
+### Timing & Timeouts
+
+Tako VM separates startup time from code execution time, giving you precise control and visibility:
+
+**Two timeout parameters:**
+- `startup_timeout` - Time limit for container startup + dependency installation (default: 120s, max: 600s)
+- `timeout` - Time limit for your code execution only (default: 30s, max: 300s)
+
+```bash
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "import pandas; print(pandas.__version__)",
+    "requirements": ["pandas"],
+    "startup_timeout": 180,
+    "timeout": 60
+  }'
+```
+
+**Timing breakdown in responses:**
+
+Every response includes a `timing` field showing where time was spent:
+
+```json
+{
+  "status": "succeeded",
+  "timing": {
+    "startup_ms": 2500,
+    "dep_install_ms": 2100,
+    "execution_ms": 150,
+    "total_ms": 2650,
+    "phase_at_exit": "completed"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `startup_ms` | Container init + dependency installation time |
+| `dep_install_ms` | Just the `uv pip install` portion (subset of startup) |
+| `execution_ms` | Your code execution time |
+| `total_ms` | Total container runtime |
+| `phase_at_exit` | Phase when container exited: `startup`, `execution`, `completed`, or `failed` |
+
+**Phase-specific timeout errors:**
+
+When a timeout occurs, the error tells you which phase timed out:
+
+```json
+{
+  "status": "timeout",
+  "error": {
+    "type": "startup_timeout",
+    "message": "Startup phase exceeded 120s limit (dependency installation)",
+    "phase": "startup"
+  },
+  "timing": {
+    "startup_ms": 120000,
+    "dep_install_ms": 119500,
+    "execution_ms": null,
+    "phase_at_exit": "startup"
+  }
+}
+```
+
+| Error Type | Description |
+|------------|-------------|
+| `startup_timeout` | Container startup or dependency installation took too long |
+| `execution_timeout` | Your code exceeded the execution time limit |
+
+This separation helps you diagnose issues: if startup times out, increase `startup_timeout` or use pre-built images; if execution times out, optimize your code or increase `timeout`.
+
 See [docs/api/rest.md](docs/api/rest.md) for complete API reference and [docs/architecture.md](docs/architecture.md) for system diagrams.
 
 ## Security Features

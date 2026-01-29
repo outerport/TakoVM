@@ -107,6 +107,11 @@ class JobTypeConfig(BaseModel):
     memory_limit: str = Field(default="512m")
     cpu_limit: float = Field(default=1.0, ge=0.1, le=16.0)
     timeout: int = Field(default=30, ge=1, le=3600)
+    """Timeout for code execution phase in seconds."""
+
+    startup_timeout: int = Field(default=120, ge=10, le=600)
+    """Timeout for startup phase (container init + dep install) in seconds."""
+
     network_enabled: bool = Field(default=False, description="Allow network access (security risk)")
 
     @field_validator("name")
@@ -202,7 +207,16 @@ class TakoVMConfig(BaseModel):
 
     # Execution limits
     default_timeout: int = Field(default=30, ge=1, le=3600)
+    """Default timeout for code execution phase in seconds."""
+
+    default_startup_timeout: int = Field(default=120, ge=10, le=600)
+    """Default timeout for startup phase (container init + dep install) in seconds."""
+
     max_timeout: int = Field(default=300, ge=1, le=86400)
+    """Maximum allowed timeout for code execution phase."""
+
+    max_startup_timeout: int = Field(default=600, ge=30, le=1800)
+    """Maximum allowed timeout for startup phase (up to 30 minutes for large deps)."""
 
     # Retention
     execution_record_ttl_days: int = Field(default=30, ge=1, le=3650)
@@ -229,9 +243,11 @@ class TakoVMConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_timeouts(self) -> "TakoVMConfig":
-        """Ensure default_timeout <= max_timeout."""
+        """Ensure default timeouts <= max timeouts."""
         if self.default_timeout > self.max_timeout:
             raise ValueError("default_timeout must be <= max_timeout")
+        if self.default_startup_timeout > self.max_startup_timeout:
+            raise ValueError("default_startup_timeout must be <= max_startup_timeout")
         return self
 
     def resolve_paths(self) -> "TakoVMConfig":

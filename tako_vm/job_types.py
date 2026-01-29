@@ -49,7 +49,10 @@ class JobType:
     """CPU limit for container."""
 
     timeout: int = 30
-    """Default timeout in seconds."""
+    """Default timeout for code execution in seconds."""
+
+    startup_timeout: int = 120
+    """Default timeout for startup phase (container init + deps) in seconds."""
 
     network_enabled: bool = False
     """Allow network access (default: no network for security)."""
@@ -71,6 +74,7 @@ class JobType:
             "memory_limit": self.memory_limit,
             "cpu_limit": self.cpu_limit,
             "timeout": self.timeout,
+            "startup_timeout": self.startup_timeout,
             "network_enabled": self.network_enabled,
         }
 
@@ -166,6 +170,7 @@ DEFAULT_JOB_TYPES = [
         memory_limit="512m",
         cpu_limit=1.0,
         timeout=30,
+        startup_timeout=60,  # No deps, minimal startup
     ),
     JobType(
         name="data-processing",
@@ -173,6 +178,7 @@ DEFAULT_JOB_TYPES = [
         memory_limit="1g",
         cpu_limit=2.0,
         timeout=60,
+        startup_timeout=180,  # pandas/numpy take time to install
     ),
     JobType(
         name="ml-inference",
@@ -180,6 +186,7 @@ DEFAULT_JOB_TYPES = [
         memory_limit="2g",
         cpu_limit=2.0,
         timeout=120,
+        startup_timeout=180,  # scikit-learn takes time to install
     ),
 ]
 

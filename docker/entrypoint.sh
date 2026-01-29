@@ -1,9 +1,28 @@
 #!/bin/bash
 set -e
 
-# Install runtime dependencies if TAKO_REQUIREMENTS is set
-# Format: comma-separated list of pip requirements (e.g., "pandas,numpy>=1.20,requests")
+# Phase tracking file - Tako VM reads this to know which phase timed out
+PHASE_FILE="/output/.tako_phase"
+
+# Helper to get current time in milliseconds
+get_time_ms() {
+    # Use date with nanoseconds, convert to ms
+    echo $(($(date +%s%N) / 1000000))
+}
+
+# Initialize phase tracking
+START_TOTAL=$(get_time_ms)
+echo "container_start_ms=$START_TOTAL" > "$PHASE_FILE"
+
+# ============================================================
+# Phase 1: Dependency Installation (startup phase)
+# ============================================================
+echo "phase=startup" >> "$PHASE_FILE"
+START_STARTUP=$(get_time_ms)
+
 if [ -n "$TAKO_REQUIREMENTS" ]; then
+    echo "dep_install_started=true" >> "$PHASE_FILE"
+
     # Write requirements to a temporary file for safer handling
     # This avoids shell word splitting issues with package specifiers
     REQS_FILE=$(mktemp)
@@ -13,14 +32,65 @@ if [ -n "$TAKO_REQUIREMENTS" ]; then
     # Using --target instead of --system to install to /tmp/site-packages
     TARGET_DIR="/tmp/site-packages"
     mkdir -p "$TARGET_DIR"
-    uv pip install --target "$TARGET_DIR" --no-cache --link-mode=copy -r "$REQS_FILE"
+
+    # Capture install result (don't exit on error yet so we can record timing)
+    set +e
+    uv pip install --target "$TARGET_DIR" --link-mode=copy -r "$REQS_FILE" 2>&1
+    DEP_EXIT_CODE=$?
+    set -e
 
     # Set PYTHONPATH so Python can find the installed packages
     export PYTHONPATH="$TARGET_DIR:$PYTHONPATH"
 
     # Cleanup
     rm -f "$REQS_FILE"
+
+    # Record dep install completion
+    END_DEP=$(get_time_ms)
+    echo "dep_install_ms=$((END_DEP - START_STARTUP))" >> "$PHASE_FILE"
+    echo "dep_install_exit_code=$DEP_EXIT_CODE" >> "$PHASE_FILE"
+
+    # Exit if dep install failed
+    if [ $DEP_EXIT_CODE -ne 0 ]; then
+        echo "phase=failed" >> "$PHASE_FILE"
+        echo "failed_phase=startup" >> "$PHASE_FILE"
+        exit $DEP_EXIT_CODE
+    fi
+else
+    echo "dep_install_started=false" >> "$PHASE_FILE"
+    echo "dep_install_ms=0" >> "$PHASE_FILE"
 fi
 
+END_STARTUP=$(get_time_ms)
+echo "startup_ms=$((END_STARTUP - START_STARTUP))" >> "$PHASE_FILE"
+
+# ============================================================
+# Phase 2: Code Execution
+# ============================================================
+echo "phase=execution" >> "$PHASE_FILE"
+START_EXEC=$(get_time_ms)
+echo "execution_start_ms=$START_EXEC" >> "$PHASE_FILE"
+
 # Drop privileges and run user code as sandbox user
-exec gosu sandbox python -u /code/main.py
+# Using exec replaces this process, so we need a wrapper to capture timing
+gosu sandbox python -u /code/main.py
+EXEC_EXIT_CODE=$?
+
+# Record execution completion
+END_EXEC=$(get_time_ms)
+echo "execution_ms=$((END_EXEC - START_EXEC))" >> "$PHASE_FILE"
+echo "execution_exit_code=$EXEC_EXIT_CODE" >> "$PHASE_FILE"
+
+# Final phase marker
+if [ $EXEC_EXIT_CODE -eq 0 ]; then
+    echo "phase=completed" >> "$PHASE_FILE"
+else
+    echo "phase=failed" >> "$PHASE_FILE"
+    echo "failed_phase=execution" >> "$PHASE_FILE"
+fi
+
+# Total time
+END_TOTAL=$(get_time_ms)
+echo "total_ms=$((END_TOTAL - START_TOTAL))" >> "$PHASE_FILE"
+
+exit $EXEC_EXIT_CODE

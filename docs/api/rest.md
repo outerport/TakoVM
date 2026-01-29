@@ -41,7 +41,8 @@ POST /execute
 |-------|------|----------|-------------|
 | `code` | string | Yes | Python code to execute |
 | `input_data` | object | No | Input data (available at `/input/data.json`, defaults to `{}`) |
-| `timeout` | integer | No | Timeout in seconds (default: 30) |
+| `timeout` | integer | No | Code execution timeout in seconds (default: 30). Does not include container startup or dependency installation time. |
+| `startup_timeout` | integer | No | Container startup timeout in seconds (10-600, default: 60). Includes container creation and dependency installation. |
 | `job_type` | string | No | Environment name (default: "default") |
 | `requirements` | array | No | Python packages to install at runtime (e.g., `["pandas", "numpy>=1.20"]`) |
 
@@ -56,6 +57,21 @@ curl -X POST http://localhost:8000/execute \
     "requirements": ["pandas"]
   }'
 ```
+
+### Example with Custom Timeouts
+
+```bash
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "import tensorflow as tf; print(tf.__version__)",
+    "requirements": ["tensorflow"],
+    "startup_timeout": 300,
+    "timeout": 60
+  }'
+```
+
+This example sets a 5-minute startup timeout (for installing TensorFlow) and a 1-minute code execution timeout.
 
 ### Example with Input/Output
 
@@ -81,9 +97,28 @@ curl -X POST http://localhost:8000/execute \
   "exit_code": 0,
   "execution_time": 0.35,
   "error": null,
-  "job_type": "default"
+  "job_type": "default",
+  "timing": {
+    "startup_ms": 1200,
+    "dep_install_ms": 850,
+    "execution_ms": 350,
+    "total_ms": 2400,
+    "phase_at_exit": "execution"
+  }
 }
 ```
+
+### Timing Object
+
+The `timing` field provides detailed breakdown of execution phases:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `startup_ms` | integer | Time spent starting the container (milliseconds) |
+| `dep_install_ms` | integer | Time spent installing dependencies (milliseconds, 0 if no requirements) |
+| `execution_ms` | integer | Time spent executing the user code (milliseconds) |
+| `total_ms` | integer | Total wall-clock time from submission to completion |
+| `phase_at_exit` | string | The phase that was active when execution ended (`startup`, `dep_install`, or `execution`) |
 
 ---
 
@@ -101,7 +136,8 @@ POST /execute/async
 |-------|------|----------|-------------|
 | `code` | string | Yes | Python code to execute |
 | `input_data` | object | No | Input data (available at `/input/data.json`, defaults to `{}`) |
-| `timeout` | integer | No | Timeout in seconds (default: 30) |
+| `timeout` | integer | No | Code execution timeout in seconds (default: 30). Does not include container startup or dependency installation time. |
+| `startup_timeout` | integer | No | Container startup timeout in seconds (10-600, default: 60). Includes container creation and dependency installation. |
 | `job_type` | string | No | Environment name (default: "default") |
 | `requirements` | array | No | Python packages to install at runtime (e.g., `["pandas", "numpy>=1.20"]`) |
 | `idempotency_key` | string | No | Unique key for idempotent submission |
@@ -205,7 +241,14 @@ GET /jobs/{job_id}/result
   "stdout": "",
   "stderr": "",
   "output": {"sum": 30},
-  "error": null
+  "error": null,
+  "timing": {
+    "startup_ms": 1200,
+    "dep_install_ms": 0,
+    "execution_ms": 350,
+    "total_ms": 1550,
+    "phase_at_exit": "execution"
+  }
 }
 ```
 
@@ -228,6 +271,13 @@ When `?view=full` is specified, additional fields are included:
   "stderr": "",
   "output": {"sum": 30},
   "error": null,
+  "timing": {
+    "startup_ms": 1200,
+    "dep_install_ms": 0,
+    "execution_ms": 350,
+    "total_ms": 1550,
+    "phase_at_exit": "execution"
+  },
   "job_ref": "default@sha256:a1b2c3d4e5f6",
   "artifacts": [
     {"name": "result.json", "size": 128, "content_type": "application/json"}
@@ -255,6 +305,7 @@ When `?view=full` is specified, additional fields are included:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `timing` | object | Detailed timing breakdown (see [Timing Object](#timing-object)) |
 | `job_ref` | string | Pinned environment reference (job_type@digest) |
 | `artifacts` | array | Output artifact metadata list |
 | `input_artifacts` | array | Input artifact metadata list |
@@ -765,7 +816,87 @@ DELETE /dlq/{entry_id}
 
 ---
 
-## Error Responses
+## Execution Errors
+
+When a job fails during execution, the `error` field in the response contains detailed information about the failure.
+
+### Error Object Structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | The error type (see table below) |
+| `message` | string | Human-readable error description |
+| `phase` | string | The execution phase where the error occurred (`startup`, `dep_install`, or `execution`) |
+
+### Error Types
+
+| Type | Description |
+|------|-------------|
+| `startup_timeout` | Container failed to start within the `startup_timeout` limit |
+| `execution_timeout` | Code execution exceeded the `timeout` limit |
+| `oom` | Process was killed due to memory limit |
+| `internal_error` | Internal server error during execution |
+| `docker_error` | Docker-related failure |
+
+### Example: Startup Timeout Error
+
+When dependency installation takes too long:
+
+```json
+{
+  "success": false,
+  "output": null,
+  "stdout": "",
+  "stderr": "Installing dependencies...",
+  "exit_code": null,
+  "execution_time": 60.0,
+  "error": {
+    "type": "startup_timeout",
+    "message": "Container startup timed out after 60 seconds during dependency installation",
+    "phase": "dep_install"
+  },
+  "job_type": "default",
+  "timing": {
+    "startup_ms": 1200,
+    "dep_install_ms": 58800,
+    "execution_ms": 0,
+    "total_ms": 60000,
+    "phase_at_exit": "dep_install"
+  }
+}
+```
+
+### Example: Execution Timeout Error
+
+When user code runs too long:
+
+```json
+{
+  "success": false,
+  "output": null,
+  "stdout": "Processing started...\n",
+  "stderr": "",
+  "exit_code": null,
+  "execution_time": 30.0,
+  "error": {
+    "type": "execution_timeout",
+    "message": "Code execution timed out after 30 seconds",
+    "phase": "execution"
+  },
+  "job_type": "default",
+  "timing": {
+    "startup_ms": 1500,
+    "dep_install_ms": 0,
+    "execution_ms": 30000,
+    "total_ms": 31500,
+    "phase_at_exit": "execution"
+  }
+}
+```
+
+---
+
+## HTTP Error Responses
 
 ### 400 Bad Request
 

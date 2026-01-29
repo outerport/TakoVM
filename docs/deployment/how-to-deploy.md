@@ -2,6 +2,9 @@
 
 This guide covers common deployment scenarios for Tako VM.
 
+!!! info "Security Model"
+    Tako VM is designed for **single-tenant deployments** (one user/application per instance). For multi-tenant scenarios with untrusted users, deploy separate Tako VM instances per tenant or use VM-level isolation.
+
 ## Deployment Options
 
 | Method | Complexity | Use Case |
@@ -157,6 +160,37 @@ docker-compose down && docker-compose up -d
 
 !!! warning "Security Note"
     Mounting `/var/run/docker.sock` gives Tako VM full Docker access. The executor containers are still isolated, but Tako VM itself has elevated privileges.
+
+### Container-in-Container: Workspace Volume
+
+When Tako VM runs inside a container, there's a filesystem visibility issue: Tako VM creates temporary job files inside its container, but Docker (running on the host) can't see them when mounting to executor containers.
+
+**The problem:**
+```
+Tako VM container creates: /tmp/job-123/code/main.py
+Docker daemon looks for:   /tmp/job-123/code/main.py (on HOST - doesn't exist!)
+Result: "bind source path does not exist" error
+```
+
+**The solution:** Use a shared workspace volume that both Tako VM and Docker can see:
+
+```yaml
+services:
+  tako-vm:
+    # ... other config ...
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared workspace - same path inside container AND on host
+      - /tmp/tako-workspace:/tmp/tako-workspace
+    environment:
+      # Tell Tako VM to use this directory for job files
+      - TAKO_VM_WORKSPACE=/tmp/tako-workspace
+```
+
+This mounts the **same host directory** at the **same path** inside Tako VM, so when Docker mounts `/tmp/tako-workspace/job-123`, it finds the files.
+
+!!! note "Alternative: Docker-in-Docker"
+    For full isolation, you can run a nested Docker daemon inside Tako VM using the `docker:dind` image. This is more complex but avoids shared host directories. See the Kubernetes example below for a DinD sidecar pattern.
 
 ---
 

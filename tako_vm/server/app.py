@@ -216,7 +216,13 @@ class ExecuteRequest(BaseModel):
         default_factory=dict, description="Input data as JSON (max 1MB when serialized)"
     )
     timeout: Optional[int] = Field(
-        default=None, ge=1, le=300, description="Timeout in seconds (1-300)"
+        default=None, ge=1, le=300, description="Timeout for code execution in seconds (1-300)"
+    )
+    startup_timeout: Optional[int] = Field(
+        default=None,
+        ge=10,
+        le=600,
+        description="Timeout for startup phase (container + deps) in seconds (10-600)",
     )
     job_type: Optional[str] = Field(
         default=None,
@@ -308,6 +314,27 @@ class JobStatusResponse(BaseModel):
     )
 
 
+class ExecutionTimingResponse(BaseModel):
+    """Response model for execution timing breakdown."""
+
+    model_config = {"extra": "forbid"}
+
+    startup_ms: Optional[int] = None
+    """Time spent in startup phase (container init + dep install)."""
+
+    dep_install_ms: Optional[int] = None
+    """Time spent installing dependencies (subset of startup)."""
+
+    execution_ms: Optional[int] = None
+    """Time spent executing user code."""
+
+    total_ms: Optional[int] = None
+    """Total container runtime."""
+
+    phase_at_exit: Optional[str] = None
+    """Which phase the container was in when it exited."""
+
+
 class ExecutionRecordResponse(BaseModel):
     """Response model for execution record."""
 
@@ -326,9 +353,21 @@ class ExecutionRecordResponse(BaseModel):
     stderr: str = ""
     output: Optional[Dict[str, Any]] = None
     error: Optional[Dict[str, Any]] = None
+    timing: Optional[ExecutionTimingResponse] = None
+    """Detailed timing breakdown by execution phase."""
 
     @classmethod
     def from_record(cls, record: ExecutionRecord) -> "ExecutionRecordResponse":
+        timing_response = None
+        if record.timing:
+            timing_response = ExecutionTimingResponse(
+                startup_ms=record.timing.startup_ms,
+                dep_install_ms=record.timing.dep_install_ms,
+                execution_ms=record.timing.execution_ms,
+                total_ms=record.timing.total_ms,
+                phase_at_exit=record.timing.phase_at_exit,
+            )
+
         return cls(
             execution_id=record.execution_id,
             status=record.status,
@@ -343,6 +382,7 @@ class ExecutionRecordResponse(BaseModel):
             stderr=record.stderr,
             output=record.result_json,
             error=record.error.model_dump() if record.error else None,
+            timing=timing_response,
         )
 
 
@@ -813,6 +853,9 @@ async def _submit_async_job(request: ExecuteRequest, http_request: Request) -> A
 
     if request.timeout is not None:
         job_data["timeout"] = request.timeout
+
+    if request.startup_timeout is not None:
+        job_data["startup_timeout"] = request.startup_timeout
 
     if request.requirements is not None:
         job_data["requirements"] = request.requirements

@@ -16,13 +16,15 @@ tako_vm/
 docker/
 ├── Dockerfile.executor  # Base executor image (uv + gosu)
 ├── Dockerfile.server    # API server image
-├── entrypoint.sh        # Installs deps at runtime, runs code as sandbox user
+├── entrypoint.sh        # Installs deps at runtime, runs code as sandbox user, writes timing to /output/.tako_phase
 ```
 
 ## Key Concepts
 
 - **Runtime deps**: Dependencies installed via `uv pip install` at container startup (fast!)
 - **ExecutionRecord** status: `queued`, `running`, `succeeded`, `failed`, `timeout`, `oom`, `cancelled`
+- **ExecutionRecord.timing**: Phase breakdown (startup, execution durations) from `/output/.tako_phase`
+- **Timeouts**: `startup_timeout` (dep install) vs `timeout` (code execution) - configured separately
 - **Queue job** status: `pending`, `running`, `completed` (different from ExecutionRecord)
 - **UV_CACHE_VOLUME**: Docker volume `tako-uv-cache` speeds up repeated installs
 - Tests use temp database via `TAKO_VM_DATA_DIR` env var for isolation

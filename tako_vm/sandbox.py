@@ -14,6 +14,7 @@ Example:
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -28,6 +29,9 @@ DEFAULT_IMAGE = "code-executor:latest"
 
 # Docker volume for uv cache
 UV_CACHE_VOLUME = "tako-uv-cache"
+
+# Workspace directory for job files (configurable for container-in-container deployments)
+WORKSPACE_DIR = os.environ.get("TAKO_VM_WORKSPACE", tempfile.gettempdir())
 
 
 @dataclass
@@ -275,7 +279,7 @@ class Sandbox:
         input_data = input_data or {}
 
         # Create temporary workspace
-        workspace = Path(tempfile.mkdtemp(prefix="sandbox-"))
+        workspace = Path(tempfile.mkdtemp(prefix="sandbox-", dir=WORKSPACE_DIR))
 
         try:
             # Prepare directories

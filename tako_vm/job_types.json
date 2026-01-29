@@ -10,6 +10,7 @@
       "memory_limit": "512m",
       "cpu_limit": 1.0,
       "timeout": 30,
+      "startup_timeout": 120,
       "network_enabled": false
     },
     {
@@ -25,6 +26,7 @@
       "memory_limit": "1g",
       "cpu_limit": 2.0,
       "timeout": 60,
+      "startup_timeout": 120,
       "network_enabled": false
     },
     {
@@ -40,6 +42,7 @@
       "memory_limit": "2g",
       "cpu_limit": 2.0,
       "timeout": 120,
+      "startup_timeout": 120,
       "network_enabled": false
     },
     {
@@ -55,6 +58,7 @@
       "memory_limit": "256m",
       "cpu_limit": 0.5,
       "timeout": 10,
+      "startup_timeout": 120,
       "network_enabled": false
     }
   ]

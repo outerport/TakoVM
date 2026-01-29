@@ -117,10 +117,11 @@
       "action": "SCMP_ACT_ALLOW"
     },
     {
-      "comment": "Allow process creation (for subprocess)",
+      "comment": "Allow process creation and management (for subprocess and tini)",
       "names": [
         "clone", "clone3", "fork", "vfork", "execve", "execveat",
-        "wait4", "waitid", "exit", "exit_group"
+        "wait4", "waitid", "exit", "exit_group",
+        "setpgid", "setpgrp", "setsid"
       ],
       "action": "SCMP_ACT_ALLOW"
     },
