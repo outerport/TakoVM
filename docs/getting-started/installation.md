@@ -106,10 +106,8 @@ tako-vm/
 │   ├── config.py         # Configuration (Pydantic)
 │   ├── server/           # API server
 │   └── execution/        # Docker execution
-├── examples/             # Usage examples
 ├── docs/                 # Documentation
-├── scripts/              # Utility scripts
-├── docker/                  # Container images
+├── docker/               # Container images
 ├── pyproject.toml        # Package configuration
 ├── tako_vm.yaml.example  # Config template
 └── demo.sh               # Interactive demo
