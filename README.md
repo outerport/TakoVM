@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Tako VM" width="160">
+  <img src="assets/logo.png" alt="Tako VM" width="256">
 </p>
 
 <p align="center">
