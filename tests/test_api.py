@@ -68,7 +68,9 @@ print("Done!")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True
+        assert data["success"] is True, (
+            f"Execution failed: stderr={data.get('stderr')}, error={data.get('error')}"
+        )
         assert data["output"] == {"sum": 30}
         assert "Done!" in data["stdout"]
         assert data["exit_code"] == 0

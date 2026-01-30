@@ -69,7 +69,9 @@ with open('/output/result.json', 'w') as f:
         result = executor.execute_job(job)
 
         # This test PASSES, demonstrating the vulnerability
-        assert result["success"]
+        assert result["success"], (
+            f"Execution failed: stderr={result.get('stderr')}, error={result.get('error')}"
+        )
         output = result["output"]
 
         # Verify environment variable leakage
@@ -133,7 +135,9 @@ except Exception as e:
         result = executor.execute_job(job)
 
         # This test PASSES, demonstrating the vulnerability
-        assert result["success"]
+        assert result["success"], (
+            f"Execution failed: stderr={result.get('stderr')}, error={result.get('error')}"
+        )
         output = result["output"]
 
         assert output["readable"] is True
@@ -185,7 +189,9 @@ with open('/output/result.json', 'w') as f:
         result = executor.execute_job(job)
 
         # This test PASSES, demonstrating the vulnerability
-        assert result["success"]
+        assert result["success"], (
+            f"Execution failed: stderr={result.get('stderr')}, error={result.get('error')}"
+        )
         output = result["output"]
 
         assert output["fd_count"] > 0
@@ -232,7 +238,9 @@ with open('/output/result.json', 'w') as f:
         result = executor.execute_job(job)
 
         # This test PASSES (at least own process visible)
-        assert result["success"]
+        assert result["success"], (
+            f"Execution failed: stderr={result.get('stderr')}, error={result.get('error')}"
+        )
         output = result["output"]
 
         # In a container, at minimum the running process itself is visible
@@ -291,7 +299,9 @@ with open('/output/result.json', 'w') as f:
         result = executor.execute_job(job)
 
         # This test PASSES, demonstrating secret leakage
-        assert result["success"]
+        assert result["success"], (
+            f"Execution failed: stderr={result.get('stderr')}, error={result.get('error')}"
+        )
         output = result["output"]
 
         # CRITICAL: Secrets are exposed
@@ -336,7 +346,9 @@ with open('/output/result.json', 'w') as f:
         }
 
         result = executor.execute_job(job)
-        assert result["success"]
+        assert result["success"], (
+            f"Execution failed: stderr={result.get('stderr')}, error={result.get('error')}"
+        )
 
         # This assertion WILL FAIL until mitigations are implemented
         # Currently /proc/self/environ is "accessible"
