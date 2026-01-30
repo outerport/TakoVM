@@ -315,6 +315,7 @@ with open("/output/result.json", "w") as f:
 
         # Try to rerun immediately (job still running)
         import time
+
         time.sleep(0.5)  # Give it time to start
         rerun_response = client.post(f"/jobs/{job_id}/rerun", json={})
 
@@ -390,9 +391,7 @@ with open("/output/result.json", "w") as f:
         client.get(f"/jobs/{original_job_id}/result", params={"wait": True, "timeout": 60})
 
         # Fork
-        fork_response = client.post(
-            f"/jobs/{original_job_id}/fork", json={"code": "print('v2')"}
-        )
+        fork_response = client.post(f"/jobs/{original_job_id}/fork", json={"code": "print('v2')"})
         forked_job_id = fork_response.json()["job_id"]
 
         # Wait and get full view
@@ -406,9 +405,7 @@ with open("/output/result.json", "w") as f:
 
     def test_fork_nonexistent_job(self, client):
         """Fork of non-existent job returns 404."""
-        response = client.post(
-            "/jobs/nonexistent-id/fork", json={"code": "print('test')"}
-        )
+        response = client.post("/jobs/nonexistent-id/fork", json={"code": "print('test')"})
         assert response.status_code == 404
 
     def test_fork_requires_code(self, client):
@@ -441,6 +438,7 @@ for i in range(60):
 
         # Give it time to start
         import time
+
         time.sleep(1)
 
         # Cancel the job
@@ -482,9 +480,7 @@ with open("/output/report.txt", "w") as f:
         job_id = submit_response.json()["job_id"]
 
         # Wait for completion
-        result_response = client.get(
-            f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60}
-        )
+        result_response = client.get(f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60})
         assert result_response.status_code == 200
         assert result_response.json()["status"] == "succeeded"
 
@@ -540,9 +536,7 @@ with open("/output/persisted.txt", "w") as f:
         job_id = submit_response.json()["job_id"]
 
         # Wait for completion (temp workspace is cleaned up after this)
-        result_response = client.get(
-            f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60}
-        )
+        result_response = client.get(f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60})
         assert result_response.status_code == 200
         assert result_response.json()["status"] == "succeeded"
 

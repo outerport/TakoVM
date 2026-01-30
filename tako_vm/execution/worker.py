@@ -832,7 +832,6 @@ class CodeExecutor:
             "run",
             "--rm",
             f"--name={container_name}",
-            f"--runtime={self._runtime}",
             "--init",  # Faster signal handling with tini
             "--read-only",
             "--cap-drop=ALL",
@@ -843,6 +842,12 @@ class CodeExecutor:
             # after gosu exec's the user code, the process runs as unprivileged sandbox user with
             # no capability to regain root. The container also has all other caps dropped.
         ]
+
+        # Only specify runtime explicitly for gVisor (runsc)
+        # runc is the default Docker runtime, so we don't need to specify it explicitly
+        # (and some Docker configurations may not accept --runtime=runc)
+        if self._runtime == "runsc":
+            cmd.append(f"--runtime={self._runtime}")
 
         # Mount uv cache volume for faster repeated installs
         if has_runtime_deps:
