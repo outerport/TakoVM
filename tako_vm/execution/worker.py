@@ -838,6 +838,7 @@ class CodeExecutor:
 
         # Capability restrictions (can be disabled in CI environments where Docker
         # can't modify capability bounding sets)
+        logger.warning(f"DEBUG: enable_cap_restrictions={self.config.enable_cap_restrictions}, type={type(self.config)}")
         if self.config.enable_cap_restrictions:
             cmd.extend([
                 "--cap-drop=ALL",
