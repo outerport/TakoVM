@@ -63,6 +63,12 @@ class SandboxResult:
     """Execution duration in milliseconds."""
 
 
+def _default_enable_cap_restrictions() -> bool:
+    """Get default value for enable_cap_restrictions from env var."""
+    env_val = os.environ.get("TAKO_VM_ENABLE_CAP_RESTRICTIONS", "true").lower()
+    return env_val in ("true", "1", "yes")
+
+
 @dataclass
 class SandboxConfig:
     """Configuration for the sandbox."""
@@ -84,6 +90,9 @@ class SandboxConfig:
 
     package_dirs: List[str] = field(default_factory=list)
     """Local directories to mount as packages (added to PYTHONPATH)."""
+
+    enable_cap_restrictions: bool = field(default_factory=_default_enable_cap_restrictions)
+    """Enable capability restrictions (--cap-drop=ALL --cap-add=...)."""
 
 
 class Sandbox:
@@ -385,14 +394,20 @@ class Sandbox:
             f"--name={container_name}",
             "--init",  # Faster signal handling with tini
             "--read-only",
-            "--cap-drop=ALL",
-            "--cap-add=SETUID",  # Required for gosu to switch user
-            "--cap-add=SETGID",  # Required for gosu to switch user
+        ]
+
+        # Capability restrictions (can be disabled in CI environments where Docker
+        # can't modify capability bounding sets)
+        if self.config.enable_cap_restrictions:
+            cmd.extend([
+                "--cap-drop=ALL",
+                "--cap-add=SETUID",  # Required for gosu to switch user
+                "--cap-add=SETGID",  # Required for gosu to switch user
+            ])
             # Security note: We don't use --security-opt=no-new-privileges because gosu requires
             # setuid to drop from root to sandbox user (uid 1000). This is a one-way privilege drop:
             # after gosu exec's the user code, the process runs as unprivileged sandbox user with
             # no capability to regain root. The container also has all other caps dropped.
-        ]
 
         # Network isolation
         has_requirements = bool(requirements)

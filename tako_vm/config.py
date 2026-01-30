@@ -224,6 +224,10 @@ class TakoVMConfig(BaseModel):
     # Docker
     docker_image: str = Field(default="code-executor:latest")
     enable_seccomp: bool = Field(default=True)
+    enable_cap_restrictions: bool = Field(
+        default=True,
+        description="Enable capability restrictions (--cap-drop=ALL --cap-add=...)",
+    )
     # Note: Disabled by default because the entrypoint uses gosu to drop privileges
     # If you're using an image without gosu, set this to True
     enable_userns: bool = Field(default=False)
@@ -411,6 +415,14 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
         config_dict["container_runtime"] = os.environ["TAKO_VM_CONTAINER_RUNTIME"].lower()
     if "TAKO_VM_ENABLE_SECCOMP" in os.environ:
         config_dict["enable_seccomp"] = os.environ["TAKO_VM_ENABLE_SECCOMP"].lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+    if "TAKO_VM_ENABLE_CAP_RESTRICTIONS" in os.environ:
+        config_dict["enable_cap_restrictions"] = os.environ[
+            "TAKO_VM_ENABLE_CAP_RESTRICTIONS"
+        ].lower() in (
             "true",
             "1",
             "yes",

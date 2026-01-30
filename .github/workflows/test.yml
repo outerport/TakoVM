@@ -34,6 +34,7 @@ jobs:
       - name: Run tests with coverage
         env:
           TAKO_VM_SECURITY_MODE: permissive
+          TAKO_VM_ENABLE_CAP_RESTRICTIONS: "false"  # GitHub Actions Docker can't modify capability bounding sets
         run: |
           pytest tests/ -v --timeout=120 \
             --cov=tako_vm \
