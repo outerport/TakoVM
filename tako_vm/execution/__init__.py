@@ -5,6 +5,11 @@ Provides code execution in isolated containers with gVisor isolation by default.
 """
 
 from tako_vm.execution.builder import ContainerBuilder
+from tako_vm.execution.docker import (
+    generate_container_name,
+    is_native_linux,
+    kill_container,
+)
 from tako_vm.execution.worker import (
     CodeExecutor,
     RuntimeUnavailableError,
@@ -13,9 +18,15 @@ from tako_vm.execution.worker import (
 )
 
 __all__ = [
+    # Worker
     "CodeExecutor",
-    "ContainerBuilder",
     "RuntimeUnavailableError",
     "check_gvisor_available",
     "reset_gvisor_check",
+    # Builder
+    "ContainerBuilder",
+    # Docker utilities
+    "generate_container_name",
+    "kill_container",
+    "is_native_linux",
 ]

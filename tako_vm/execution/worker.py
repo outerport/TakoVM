@@ -6,7 +6,6 @@ Provides both legacy dict-based results and new ExecutionRecord-based results.
 
 import json
 import logging
-import os
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from tako_vm.config import TakoVMConfig, get_config
+from tako_vm.constants import MAX_REQUIREMENTS, UV_CACHE_VOLUME, WORKSPACE_DIR
 from tako_vm.execution.docker import generate_container_name, is_native_linux, kill_container
 from tako_vm.execution.health import get_circuit_breaker
 from tako_vm.execution.retry import RetryConfig, RetryContext, is_transient_error
@@ -83,18 +83,6 @@ def reset_gvisor_check() -> None:
 
 class RuntimeUnavailableError(Exception):
     """Raised when the required container runtime is not available."""
-
-
-# Workspace directory for job files (can be set via TAKO_VM_WORKSPACE env var)
-# When running the server in a container with Docker socket mounted, this must
-# be a path that exists on the host and is mounted into the server container.
-WORKSPACE_DIR = os.environ.get("TAKO_VM_WORKSPACE", tempfile.gettempdir())
-
-# Maximum number of runtime requirements to prevent env var overflow and slow startups
-MAX_REQUIREMENTS = 50
-
-# Docker volume name for uv cache (speeds up repeated dependency installs)
-UV_CACHE_VOLUME = "tako-uv-cache"
 
 
 # Default job type for backward compatibility

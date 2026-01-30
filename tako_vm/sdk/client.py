@@ -51,13 +51,17 @@ class TakoVMError(Exception):
     """Base exception for tako_vm errors."""
 
 
-class ExecutionError(TakoVMError):
-    """Raised when code execution fails."""
+class SDKExecutionError(TakoVMError):
+    """Raised when code execution fails via the SDK."""
 
     def __init__(self, message: str, stdout: str = "", stderr: str = ""):
         super().__init__(message)
         self.stdout = stdout
         self.stderr = stderr
+
+
+# Backward compatibility alias
+ExecutionError = SDKExecutionError
 
 
 class ValidationError(TakoVMError):
