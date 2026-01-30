@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Tako VM" width="200">
+  <img src="assets/logo.png" alt="Tako VM" width="160">
 </p>
 
-# Tako VM
-
-Job queue infrastructure for Python AI agents. Self-hosted. Free.
+<p align="center">
+  <strong>Job queue infrastructure for Python AI agents. Self-hosted. Free.</strong>
+</p>
 
 Stop rebuilding Redis + Bull + Postgres for async job processing.
 Tako VM handles job queues, retries, and execution history out of the box.
