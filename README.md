@@ -3,11 +3,11 @@
 </p>
 
 <p align="center">
-  <strong>Job queue infrastructure for Python AI agents. Self-hosted. Free.</strong>
+  <strong>Run untrusted Python safely. Job queues and Docker isolation built-in.</strong>
 </p>
 
-Stop rebuilding Redis + Bull + Postgres for async job processing.
-Tako VM handles job queues, retries, and execution history out of the box.
+Run AI-generated code in isolated Docker containers with gVisor sandboxing.
+Job queues, retries, and execution history included—no Redis or Postgres required.
 
 ```python
 uv pip install tako-vm
