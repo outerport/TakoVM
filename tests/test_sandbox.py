@@ -272,11 +272,13 @@ print(f"version: {requests.__version__}")
 
 
 @pytest.mark.requires_host_mounts
+@pytest.mark.requires_host_mounts
 class TestSandboxPackageDirs:
     """Tests for local package mounting.
 
     These tests require mounting host paths into Docker containers,
-    which doesn't work in VM environments (e.g., Lima on macOS).
+    which doesn't work in VM environments (e.g., Lima on macOS)
+    or CI environments where temp paths may not be accessible to Docker.
     """
 
     def test_sandbox_with_package_dirs(self):

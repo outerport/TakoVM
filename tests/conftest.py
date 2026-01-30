@@ -49,11 +49,15 @@ def is_executor_image_available() -> bool:
 
 def is_running_in_vm() -> bool:
     """
-    Detect if tests are running inside a VM (e.g., Lima on macOS).
+    Detect if tests are running in an environment where host mounts don't work.
 
-    In VM environments, host path mounts may not work correctly because
-    the temp directory is on the host but Docker runs inside the VM.
+    This includes VM environments (e.g., Lima on macOS) and CI environments
+    where temp directory mounts may not work correctly with Docker.
     """
+    # Check for CI environment (GitHub Actions, GitLab CI, etc.)
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        return True
+
     # Check for Lima environment
     if os.path.exists("/Users") and os.path.exists("/home"):
         # We're in Lima (macOS paths mounted + Linux home exists)
