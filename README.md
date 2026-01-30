@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Tako VM" width="200">
+</p>
+
 # Tako VM
 
 Job queue infrastructure for Python AI agents. Self-hosted. Free.
