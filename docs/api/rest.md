@@ -111,28 +111,12 @@ curl -X POST http://localhost:8000/execute \
   "exit_code": 0,
   "execution_time": 0.35,
   "error": null,
-  "job_type": "default",
-  "timing": {
-    "startup_ms": 1200,
-    "dep_install_ms": 850,
-    "execution_ms": 350,
-    "total_ms": 2400,
-    "phase_at_exit": "execution"
-  }
+  "job_type": "default"
 }
 ```
 
-### Timing Object
-
-The `timing` field provides detailed breakdown of execution phases:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `startup_ms` | integer | Time spent starting the container (milliseconds) |
-| `dep_install_ms` | integer | Time spent installing dependencies (milliseconds, 0 if no requirements) |
-| `execution_ms` | integer | Time spent executing the user code (milliseconds) |
-| `total_ms` | integer | Total wall-clock time from submission to completion |
-| `phase_at_exit` | string | The phase that was active when execution ended (`startup`, `dep_install`, or `execution`) |
+!!! note
+    The sync `/execute` endpoint returns a simpler response without detailed timing. For detailed timing breakdowns, use the async endpoint and fetch results with `?view=full`.
 
 ---
 
@@ -177,15 +161,16 @@ This ensures safe retries without duplicate job execution.
 
 ### Response (Idempotent Duplicate)
 
-If the same `idempotency_key` and payload are submitted again:
+If the same `idempotency_key` and payload are submitted again, the existing job is returned:
 
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "succeeded",
-  "message": "Existing job returned (idempotent)"
+  "status": "succeeded"
 }
 ```
+
+The status will reflect the current state of the existing job (e.g., `queued`, `running`, `succeeded`).
 
 ---
 
@@ -294,19 +279,19 @@ When `?view=full` is specified, additional fields are included:
   },
   "job_ref": "default@sha256:a1b2c3d4e5f6",
   "artifacts": [
-    {"name": "result.json", "size": 128, "content_type": "application/json"}
+    {"name": "result.json", "size_bytes": 128, "sha256": "abc123...", "content_type": "application/json"}
   ],
   "input_artifacts": [
-    {"name": "data.json", "size": 64, "content_type": "application/json"}
+    {"name": "_code.py", "size_bytes": 256, "sha256": "def456...", "content_type": "text/x-python"},
+    {"name": "_input.json", "size_bytes": 64, "sha256": "ghi789...", "content_type": "application/json"}
   ],
   "resource_usage": {
+    "max_rss_mb": 64.5,
     "cpu_time_ms": 250,
-    "memory_peak_mb": 64,
-    "io_read_bytes": 1024,
-    "io_write_bytes": 512
+    "wall_time_ms": 350
   },
-  "code_hash": "sha256:abc123...",
-  "input_hash": "sha256:def456...",
+  "code_hash": "abc123...",
+  "input_hash": "def456...",
   "parent_execution_id": null,
   "relationship": null,
   "stdout_truncated": false,
@@ -319,11 +304,11 @@ When `?view=full` is specified, additional fields are included:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `timing` | object | Detailed timing breakdown (see [Timing Object](#timing-object)) |
+| `timing` | object | Detailed timing breakdown (see below) |
 | `job_ref` | string | Pinned environment reference (job_type@digest) |
-| `artifacts` | array | Output artifact metadata list |
-| `input_artifacts` | array | Input artifact metadata list |
-| `resource_usage` | object | Resource consumption metrics |
+| `artifacts` | array | Output artifact metadata (name, size_bytes, sha256, content_type) |
+| `input_artifacts` | array | Input artifact metadata (includes internal `_code.py`, `_input.json`) |
+| `resource_usage` | object | Resource metrics: `max_rss_mb`, `cpu_time_ms`, `wall_time_ms` |
 | `code_hash` | string | SHA-256 hash of the submitted code |
 | `input_hash` | string | SHA-256 hash of the input data |
 | `parent_execution_id` | string | ID of parent execution (if rerun/fork) |
@@ -331,6 +316,16 @@ When `?view=full` is specified, additional fields are included:
 | `stdout_truncated` | boolean | Whether stdout was truncated |
 | `stderr_truncated` | boolean | Whether stderr was truncated |
 | `idempotency_key` | string | The idempotency key used for submission |
+
+#### Timing Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `startup_ms` | integer | Time spent in startup phase (container init + dep install) |
+| `dep_install_ms` | integer | Time spent installing dependencies (subset of startup) |
+| `execution_ms` | integer | Time spent executing user code |
+| `total_ms` | integer | Total container runtime |
+| `phase_at_exit` | string | Phase when container exited: `startup`, `execution`, `completed`, or `failed` |
 
 ### Response (Job In Progress)
 
@@ -360,9 +355,7 @@ POST /jobs/{job_id}/rerun
 ```json
 {
   "job_id": "661f9511-f30c-52e5-b827-557766551111",
-  "status": "queued",
-  "parent_execution_id": "550e8400-e29b-41d4-a716-446655440000",
-  "relationship": "rerun"
+  "status": "queued"
 }
 ```
 
@@ -370,7 +363,7 @@ The new job will have:
 - Same code as the original
 - Same input data as the original
 - Same job type and timeout settings
-- Lineage tracking back to the original execution
+- Lineage tracking back to the original execution (visible in `?view=full` response)
 
 ---
 
@@ -403,9 +396,7 @@ curl -X POST http://localhost:8000/jobs/550e8400-e29b-41d4-a716-446655440000/for
 ```json
 {
   "job_id": "772fa622-g41d-63f6-c938-668877662222",
-  "status": "queued",
-  "parent_execution_id": "550e8400-e29b-41d4-a716-446655440000",
-  "relationship": "fork"
+  "status": "queued"
 }
 ```
 
@@ -413,7 +404,7 @@ The new job will have:
 - The new code provided in the request
 - Same input data as the original
 - Same job type and timeout settings
-- Lineage tracking back to the original execution
+- Lineage tracking back to the original execution (visible in `?view=full` response)
 
 ---
 
@@ -840,42 +831,90 @@ When a job fails during execution, the `error` field in the response contains de
 |-------|------|-------------|
 | `type` | string | The error type (see table below) |
 | `message` | string | Human-readable error description |
-| `phase` | string | The execution phase where the error occurred (`startup`, `dep_install`, or `execution`) |
+| `phase` | string | The execution phase where the error occurred (`startup` or `execution`) |
 
 ### Error Types
 
+#### Timeout Errors
+
 | Type | Description |
 |------|-------------|
-| `startup_timeout` | Container failed to start within the `startup_timeout` limit |
-| `execution_timeout` | Code execution exceeded the `timeout` limit |
-| `oom` | Process was killed due to memory limit |
-| `internal_error` | Internal server error during execution |
-| `docker_error` | Docker-related failure |
+| `timeout` | Generic execution exceeded time limit (legacy) |
+| `startup_timeout` | Startup phase (dep install) exceeded time limit |
+| `execution_timeout` | Code execution phase exceeded time limit |
+
+#### Signal-Based Errors
+
+| Type | Description |
+|------|-------------|
+| `oom` | Out of memory (SIGKILL/137) |
+| `cancelled` | Cancelled by user (SIGTERM/143) |
+| `segfault` | Segmentation fault (SIGSEGV/139) |
+| `abort` | Process aborted (SIGABRT/134) |
+| `arithmetic_error` | Floating point exception (SIGFPE/136) |
+| `bus_error` | Bus error (SIGBUS/135) |
+| `pipe_error` | Broken pipe (SIGPIPE/141) |
+| `killed` | Process killed by system |
+
+#### Python Errors
+
+| Type | Description |
+|------|-------------|
+| `syntax_error` | SyntaxError, IndentationError |
+| `import_error` | ImportError, ModuleNotFoundError |
+| `type_error` | TypeError |
+| `value_error` | ValueError |
+| `key_error` | KeyError |
+| `index_error` | IndexError |
+| `attribute_error` | AttributeError |
+| `name_error` | NameError (undefined variable) |
+| `file_not_found` | FileNotFoundError |
+| `file_error` | IsADirectoryError, NotADirectoryError |
+| `os_error` | OSError, IOError |
+| `recursion_error` | RecursionError |
+| `assertion_error` | AssertionError |
+| `division_error` | ZeroDivisionError |
+| `overflow_error` | OverflowError |
+| `encoding_error` | UnicodeError |
+| `json_error` | JSONDecodeError |
+
+#### Other Errors
+
+| Type | Description |
+|------|-------------|
+| `permission` | Permission denied |
+| `dependency_error` | Package installation failure (uv/pip) |
+| `network_error` | ConnectionError |
+| `network_timeout` | Network request timed out |
+| `docker_error` | Docker image/command not found |
+| `service_unavailable` | Circuit breaker open |
+| `config_error` | Configuration error |
+| `internal_error` | Internal Tako VM error |
+| `runtime_error` | Generic runtime error |
+| `unknown` | Unknown error type |
 
 ### Example: Startup Timeout Error
 
-When dependency installation takes too long:
+When dependency installation takes too long (from async job result with `?view=full`):
 
 ```json
 {
-  "success": false,
-  "output": null,
+  "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "timeout",
   "stdout": "",
   "stderr": "Installing dependencies...",
   "exit_code": null,
-  "execution_time": 60.0,
   "error": {
     "type": "startup_timeout",
     "message": "Container startup timed out after 60 seconds during dependency installation",
-    "phase": "dep_install"
+    "phase": "startup"
   },
-  "job_type": "default",
   "timing": {
-    "startup_ms": 1200,
+    "startup_ms": 60000,
     "dep_install_ms": 58800,
     "execution_ms": 0,
     "total_ms": 60000,
-    "phase_at_exit": "dep_install"
+    "phase_at_exit": "startup"
   }
 }
 ```
@@ -886,18 +925,16 @@ When user code runs too long:
 
 ```json
 {
-  "success": false,
-  "output": null,
+  "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "timeout",
   "stdout": "Processing started...\n",
   "stderr": "",
   "exit_code": null,
-  "execution_time": 30.0,
   "error": {
     "type": "execution_timeout",
     "message": "Code execution timed out after 30 seconds",
     "phase": "execution"
   },
-  "job_type": "default",
   "timing": {
     "startup_ms": 1500,
     "dep_install_ms": 0,
