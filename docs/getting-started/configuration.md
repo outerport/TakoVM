@@ -53,8 +53,9 @@ queue_wait_timeout: 1.0   # Queue wait timeout (seconds)
 # CONTAINER SECURITY
 # ==============================================================================
 docker_image: code-executor:latest
-enable_seccomp: true      # syscall filtering
-enable_userns: false      # user namespace (disabled for gosu compatibility)
+enable_seccomp: true           # syscall filtering
+enable_cap_restrictions: true  # capability restrictions (--cap-drop=ALL)
+enable_userns: false           # user namespace (disabled for gosu compatibility)
 
 # gVisor runtime (strong isolation)
 container_runtime: runsc  # 'runsc' (gVisor) or 'runc' (standard Docker)
@@ -122,14 +123,15 @@ export TAKO_VM_DATA_DIR=/var/lib/tako_vm
 # Override database file path
 export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/executions.db
 
-# Override workspace directory for job file storage
-export TAKO_VM_WORKSPACE=/var/tmp/tako_vm
-
 # Security mode (strict or permissive)
 export TAKO_VM_SECURITY_MODE=permissive  # Allow fallback to runc if gVisor unavailable
 
 # Container runtime (runsc or runc)
 export TAKO_VM_CONTAINER_RUNTIME=runsc   # Use gVisor for strong isolation
+
+# Security features (true/false/1/0/yes/no)
+export TAKO_VM_ENABLE_SECCOMP=true       # Enable syscall filtering
+export TAKO_VM_ENABLE_CAP_RESTRICTIONS=true  # Enable capability restrictions
 
 # XDG Base Directory support
 export XDG_DATA_HOME=/custom/data/path  # Tako VM will use $XDG_DATA_HOME/tako_vm
@@ -140,9 +142,10 @@ export XDG_DATA_HOME=/custom/data/path  # Tako VM will use $XDG_DATA_HOME/tako_v
 | `TAKO_VM_CONFIG` | Config file path | Search in standard locations |
 | `TAKO_VM_DATA_DIR` | Data directory | `~/.tako_vm` or `$XDG_DATA_HOME/tako_vm` |
 | `TAKO_VM_DATABASE_FILE` | SQLite database path | `$DATA_DIR/executions.db` |
-| `TAKO_VM_WORKSPACE` | Job workspace directory | System temp directory |
 | `TAKO_VM_SECURITY_MODE` | Security mode (`strict` or `permissive`) | `strict` |
 | `TAKO_VM_CONTAINER_RUNTIME` | Container runtime (`runsc` or `runc`) | `runsc` |
+| `TAKO_VM_ENABLE_SECCOMP` | Enable seccomp syscall filtering | `true` |
+| `TAKO_VM_ENABLE_CAP_RESTRICTIONS` | Enable capability restrictions | `true` |
 | `XDG_DATA_HOME` | XDG base data directory | `~/.local/share` |
 
 ## Job Types
@@ -265,7 +268,7 @@ limactl start lima-gvisor.yaml
 limactl shell tako-gvisor
 ```
 
-## New Configuration Options
+## Configuration Options Reference
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -277,3 +280,6 @@ limactl shell tako-gvisor
 | `queue_wait_timeout` | Queue wait timeout (seconds) | `1.0` |
 | `container_runtime` | Container runtime (`runsc` or `runc`) | `runsc` |
 | `security_mode` | Security mode (`strict` or `permissive`) | `strict` |
+| `enable_seccomp` | Enable seccomp syscall filtering | `true` |
+| `enable_cap_restrictions` | Enable capability restrictions (`--cap-drop=ALL`) | `true` |
+| `enable_userns` | Enable user namespace isolation | `false` |

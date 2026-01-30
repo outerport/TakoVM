@@ -272,7 +272,6 @@ print(f"version: {requests.__version__}")
 
 
 @pytest.mark.requires_host_mounts
-@pytest.mark.requires_host_mounts
 class TestSandboxPackageDirs:
     """Tests for local package mounting.
 

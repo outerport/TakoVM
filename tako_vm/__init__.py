@@ -36,6 +36,7 @@ except ImportError:
     pass
 
 from tako_vm.config import TakoVMConfig, get_config
+from tako_vm.constants import DEFAULT_IMAGE, MAX_REQUIREMENTS, UV_CACHE_VOLUME, WORKSPACE_DIR
 from tako_vm.job_types import JobType, JobTypeRegistry
 from tako_vm.models import Artifact, ExecutionRecord, JobVersion, ResourceUsage
 from tako_vm.sandbox import Sandbox, SandboxResult
@@ -43,6 +44,7 @@ from tako_vm.sandbox import run as sandbox_run
 from tako_vm.sdk.client import (
     ExecutionError,
     ExecutionResult,
+    SDKExecutionError,
     TakoVM,
     TakoVMError,
     ValidationError,
@@ -78,8 +80,14 @@ __all__ = [
     # Configuration
     "TakoVMConfig",
     "get_config",
+    # Constants
+    "DEFAULT_IMAGE",
+    "UV_CACHE_VOLUME",
+    "WORKSPACE_DIR",
+    "MAX_REQUIREMENTS",
     # Exceptions
     "TakoVMError",
-    "ExecutionError",
+    "SDKExecutionError",
+    "ExecutionError",  # Backward compatibility alias for SDKExecutionError
     "ValidationError",
 ]

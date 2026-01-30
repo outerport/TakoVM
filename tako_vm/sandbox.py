@@ -23,18 +23,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from tako_vm.constants import DEFAULT_IMAGE, UV_CACHE_VOLUME, WORKSPACE_DIR
 from tako_vm.execution.docker import generate_container_name, kill_container
 
 logger = logging.getLogger(__name__)
-
-# Default image name
-DEFAULT_IMAGE = "code-executor:latest"
-
-# Docker volume for uv cache
-UV_CACHE_VOLUME = "tako-uv-cache"
-
-# Workspace directory for job files (configurable for container-in-container deployments)
-WORKSPACE_DIR = os.environ.get("TAKO_VM_WORKSPACE", tempfile.gettempdir())
 
 
 @dataclass

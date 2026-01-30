@@ -180,3 +180,54 @@ def gvisor_available():
 def running_in_vm():
     """Fixture to check if running in a VM environment."""
     return RUNNING_IN_VM
+
+
+@pytest.fixture
+def temp_data_dir():
+    """
+    Create a temporary data directory for isolated tests.
+
+    Resets config and sets environment variables to use a temp directory,
+    ensuring test isolation from user data.
+    """
+    from pathlib import Path
+
+    from tako_vm.config import reset_config
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        original_data_dir = os.environ.get("TAKO_VM_DATA_DIR")
+        original_db_file = os.environ.get("TAKO_VM_DATABASE_FILE")
+
+        os.environ["TAKO_VM_DATA_DIR"] = tmpdir
+        os.environ["TAKO_VM_DATABASE_FILE"] = str(Path(tmpdir) / "test.db")
+
+        reset_config()
+
+        yield tmpdir
+
+        reset_config()
+        if original_data_dir:
+            os.environ["TAKO_VM_DATA_DIR"] = original_data_dir
+        else:
+            os.environ.pop("TAKO_VM_DATA_DIR", None)
+        if original_db_file:
+            os.environ["TAKO_VM_DATABASE_FILE"] = original_db_file
+        else:
+            os.environ.pop("TAKO_VM_DATABASE_FILE", None)
+
+
+@pytest.fixture
+def test_storage(temp_data_dir):
+    """
+    Create an ExecutionStorage instance for testing.
+
+    Uses the temp_data_dir fixture for isolation.
+    """
+    from pathlib import Path
+
+    from tako_vm.storage import ExecutionStorage
+
+    storage = ExecutionStorage(Path(temp_data_dir) / "test.db")
+    storage.init()
+    yield storage
+    storage.close()

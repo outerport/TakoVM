@@ -307,21 +307,29 @@ tako-vm/
 ├── tako_vm/
 │   ├── server/
 │   │   ├── app.py           # FastAPI routes, request handling
-│   │   └── queue.py         # WorkerPool, async job management
+│   │   ├── queue.py         # WorkerPool, async job management
+│   │   └── correlation.py   # Correlation ID middleware for tracing
 │   ├── execution/
 │   │   ├── worker.py        # CodeExecutor, Docker commands
-│   │   └── builder.py       # Pre-built image generation
-│   ├── config.py            # Pydantic settings, YAML loading
-│   ├── models.py            # ExecutionRecord, JobStatus
+│   │   ├── builder.py       # ContainerBuilder (pre-built images)
+│   │   ├── docker.py        # Docker utilities (container naming, cleanup)
+│   │   ├── health.py        # Circuit breaker, startup cleanup
+│   │   └── retry.py         # Retry logic for transient failures
+│   ├── config.py            # Pydantic settings (TakoVMConfig), YAML loading
+│   ├── models.py            # ExecutionRecord, JobStatus, ErrorType
 │   ├── storage.py           # SQLite persistence
-│   ├── security.py          # Validation, sanitization
-│   └── job_types.py         # JobType, JobTypeRegistry
+│   ├── security.py          # Validation, error sanitization
+│   ├── job_types.py         # JobType, JobTypeRegistry
+│   └── version.py           # VersionManager for job type versioning
 ├── docker/
 │   ├── Dockerfile.executor  # Base image (Python + uv + gosu)
 │   ├── Dockerfile.server    # Server image (for containerized deploy)
 │   └── entrypoint.sh        # Install deps, drop privileges, run code
+│                            # Writes timing to /output/.tako_phase
 ├── tako_vm.yaml.example     # Configuration reference
+├── lima-gvisor.yaml         # Lima VM config for macOS/Windows with gVisor
 └── docs/
     ├── api/rest.md          # API reference
-    └── guide/async-jobs.md  # Async patterns guide
+    ├── api/sdk.md           # Python SDK reference
+    └── guide/               # User guides
 ```

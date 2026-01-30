@@ -14,10 +14,15 @@ Example:
     ))
 """
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from tako_vm.config import JobTypeConfig
 
 
 @dataclass
@@ -79,9 +84,57 @@ class JobType:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "JobType":
+    def from_dict(cls, data: dict) -> JobType:
         """Create from dictionary."""
         return cls(**data)
+
+    @classmethod
+    def from_config(cls, config: JobTypeConfig) -> JobType:
+        """
+        Create JobType from JobTypeConfig (for config loading).
+
+        Args:
+            config: Pydantic JobTypeConfig from YAML/config file
+
+        Returns:
+            JobType dataclass instance
+        """
+        return cls(
+            name=config.name,
+            requirements=list(config.requirements),
+            python_version=config.python_version,
+            base_image=config.base_image,
+            shared_code=list(config.shared_code),
+            environment=dict(config.environment),
+            memory_limit=config.memory_limit,
+            cpu_limit=config.cpu_limit,
+            timeout=config.timeout,
+            startup_timeout=config.startup_timeout,
+            network_enabled=config.network_enabled,
+        )
+
+    def to_config(self) -> JobTypeConfig:
+        """
+        Convert to JobTypeConfig (for serialization).
+
+        Returns:
+            Pydantic JobTypeConfig instance
+        """
+        from tako_vm.config import JobTypeConfig
+
+        return JobTypeConfig(
+            name=self.name,
+            requirements=list(self.requirements),
+            python_version=self.python_version,
+            base_image=self.base_image,
+            shared_code=list(self.shared_code),
+            environment=dict(self.environment),
+            memory_limit=self.memory_limit,
+            cpu_limit=self.cpu_limit,
+            timeout=self.timeout,
+            startup_timeout=self.startup_timeout,
+            network_enabled=self.network_enabled,
+        )
 
 
 class JobTypeRegistry:
