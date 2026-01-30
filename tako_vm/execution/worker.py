@@ -890,6 +890,7 @@ class CodeExecutor:
 
         # Add seccomp profile if enabled and exists (native Linux only)
         # Docker Desktop (macOS/Windows) has issues with custom seccomp profiles
+        # Some CI environments (GitHub Actions) may also have issues with custom seccomp
         if self.config.enable_seccomp and self.config.seccomp_profile_path:
             if is_native_linux() and self.config.seccomp_profile_path.exists():
                 cmd.append(f"--security-opt=seccomp={self.config.seccomp_profile_path}")

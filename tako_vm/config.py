@@ -409,6 +409,12 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
         config_dict["security_mode"] = os.environ["TAKO_VM_SECURITY_MODE"].lower()
     if "TAKO_VM_CONTAINER_RUNTIME" in os.environ:
         config_dict["container_runtime"] = os.environ["TAKO_VM_CONTAINER_RUNTIME"].lower()
+    if "TAKO_VM_ENABLE_SECCOMP" in os.environ:
+        config_dict["enable_seccomp"] = os.environ["TAKO_VM_ENABLE_SECCOMP"].lower() in (
+            "true",
+            "1",
+            "yes",
+        )
 
     # Validate and create config
     try:
