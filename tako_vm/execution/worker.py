@@ -839,11 +839,13 @@ class CodeExecutor:
         # Capability restrictions (can be disabled in CI environments where Docker
         # can't modify capability bounding sets)
         if self.config.enable_cap_restrictions:
-            cmd.extend([
-                "--cap-drop=ALL",
-                "--cap-add=SETUID",  # Required for gosu to switch user
-                "--cap-add=SETGID",  # Required for gosu to switch user
-            ])
+            cmd.extend(
+                [
+                    "--cap-drop=ALL",
+                    "--cap-add=SETUID",  # Required for gosu to switch user
+                    "--cap-add=SETGID",  # Required for gosu to switch user
+                ]
+            )
             # Security note: We don't use --security-opt=no-new-privileges because gosu requires
             # setuid to drop from root to sandbox user (uid 1000). This is a one-way privilege drop:
             # after gosu exec's the user code, the process runs as unprivileged sandbox user with
