@@ -35,7 +35,7 @@ jobs:
         env:
           TAKO_VM_SECURITY_MODE: permissive
           TAKO_VM_ENABLE_CAP_RESTRICTIONS: "false"  # GitHub Actions Docker can't modify capability bounding sets
-          # Seccomp is enabled (default) - works on native Linux
+          TAKO_VM_ENABLE_SECCOMP: "false"  # Custom seccomp profiles block container init in GitHub Actions
         run: |
           pytest tests/ -v --timeout=120 \
             --cov=tako_vm \

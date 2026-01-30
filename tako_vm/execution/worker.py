@@ -838,8 +838,6 @@ class CodeExecutor:
 
         # Capability restrictions (can be disabled in CI environments where Docker
         # can't modify capability bounding sets)
-        logger.warning(f"DEBUG: enable_cap_restrictions={self.config.enable_cap_restrictions}")
-        logger.warning(f"DEBUG: enable_seccomp={self.config.enable_seccomp}")
         if self.config.enable_cap_restrictions:
             cmd.extend([
                 "--cap-drop=ALL",
@@ -943,8 +941,6 @@ class CodeExecutor:
 
         # Add image name
         cmd.append(image_name)
-
-        logger.warning(f"DEBUG: docker cmd={' '.join(cmd[:20])}...")  # First 20 args
 
         try:
             result = subprocess.run(
