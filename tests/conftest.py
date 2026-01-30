@@ -2,7 +2,9 @@
 Pytest configuration for Tako VM tests.
 """
 
+import os
 import subprocess
+import tempfile
 import warnings
 
 import pytest
@@ -45,9 +47,57 @@ def is_executor_image_available() -> bool:
         return False
 
 
+def is_running_in_vm() -> bool:
+    """
+    Detect if tests are running inside a VM (e.g., Lima on macOS).
+
+    In VM environments, host path mounts may not work correctly because
+    the temp directory is on the host but Docker runs inside the VM.
+    """
+    # Check for Lima environment
+    if os.path.exists("/Users") and os.path.exists("/home"):
+        # We're in Lima (macOS paths mounted + Linux home exists)
+        return True
+
+    # Check if temp dir is accessible from Docker
+    # This catches cases where Docker is remote or in a VM
+    try:
+        temp_dir = tempfile.gettempdir()
+        result = subprocess.run(
+            ["docker", "run", "--rm", "-v", f"{temp_dir}:/test:ro", "alpine", "ls", "/test"],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        # If mount fails or is empty when it shouldn't be, we're in a VM
+        if result.returncode != 0:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def is_gvisor_available() -> bool:
+    """Check if gVisor runtime is available."""
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.Runtimes}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode == 0 and "runsc" in result.stdout
+    except Exception:
+        return False
+
+
 # Check Docker availability once at module load
 DOCKER_AVAILABLE = is_docker_available()
 EXECUTOR_IMAGE_AVAILABLE = is_executor_image_available()
+RUNNING_IN_VM = is_running_in_vm() if DOCKER_AVAILABLE else False
+GVISOR_AVAILABLE = is_gvisor_available() if DOCKER_AVAILABLE else False
 
 
 # Skip markers for tests that require Docker
@@ -64,6 +114,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_executor_image: mark test as requiring the executor image"
     )
+    config.addinivalue_line(
+        "markers", "requires_host_mounts: mark test as requiring host path mounts (skip in VM)"
+    )
+    config.addinivalue_line("markers", "requires_gvisor: mark test as requiring gVisor runtime")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -85,6 +139,20 @@ def pytest_collection_modifyitems(config, items):
             if not DOCKER_AVAILABLE:
                 item.add_marker(pytest.mark.skip(reason="Docker not available"))
 
+        # Skip tests that require host mounts when running in a VM
+        if item.get_closest_marker("requires_host_mounts"):
+            if RUNNING_IN_VM:
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason="Test requires host path mounts which don't work in VM environments"
+                    )
+                )
+
+        # Skip tests that require gVisor when it's not available
+        if item.get_closest_marker("requires_gvisor"):
+            if not GVISOR_AVAILABLE:
+                item.add_marker(pytest.mark.skip(reason="gVisor runtime not available"))
+
 
 @pytest.fixture(scope="session")
 def docker_available():
@@ -96,3 +164,15 @@ def docker_available():
 def executor_image_available():
     """Fixture to check if executor image is available."""
     return EXECUTOR_IMAGE_AVAILABLE
+
+
+@pytest.fixture(scope="session")
+def gvisor_available():
+    """Fixture to check if gVisor is available."""
+    return GVISOR_AVAILABLE
+
+
+@pytest.fixture(scope="session")
+def running_in_vm():
+    """Fixture to check if running in a VM environment."""
+    return RUNNING_IN_VM

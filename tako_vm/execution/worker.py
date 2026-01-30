@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from tako_vm.config import TakoVMConfig, get_config
+from tako_vm.execution.docker import generate_container_name, is_native_linux, kill_container
 from tako_vm.execution.health import get_circuit_breaker
 from tako_vm.execution.retry import RetryConfig, RetryContext, is_transient_error
 from tako_vm.job_types import JobType, JobTypeRegistry
@@ -362,6 +363,7 @@ class CodeExecutor:
                 timeout=timeout,
                 job_type=job_type,
                 extra_requirements=job.get("requirements"),
+                job_id=job_id,
             )
 
             # Add job type info to result
@@ -492,6 +494,7 @@ class CodeExecutor:
                         timeout=timeout,
                         job_type=job_type,
                         extra_requirements=job.get("requirements"),
+                        job_id=job_id,
                     )
 
                     # Check for transient Docker errors in result
@@ -631,10 +634,10 @@ class CodeExecutor:
 
     def _collect_artifacts(self, output_dir: Path, job_id: str) -> List[Artifact]:
         """
-        Collect artifacts from output directory.
+        Collect artifacts from output directory and copy to permanent storage.
 
         Args:
-            output_dir: Path to output directory
+            output_dir: Path to output directory (temp)
             job_id: Job ID for storage key generation
 
         Returns:
@@ -645,6 +648,10 @@ class CodeExecutor:
 
         if not output_dir.exists():
             return artifacts
+
+        # Create permanent storage directory for artifacts
+        artifacts_dir = self.config.data_dir / "runs" / job_id / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
 
         for path in output_dir.iterdir():
             if not path.is_file():
@@ -669,12 +676,18 @@ class CodeExecutor:
 
             try:
                 file_hash = compute_file_hash(path)
+                storage_key = f"runs/{job_id}/artifacts/{path.name}"
+
+                # Copy file to permanent storage
+                dest_path = self.config.data_dir / storage_key
+                shutil.copy2(path, dest_path)
+
                 artifacts.append(
                     Artifact(
                         name=path.name,
                         size_bytes=size,
                         sha256=file_hash,
-                        storage_key=f"runs/{job_id}/artifacts/{path.name}",
+                        storage_key=storage_key,
                     )
                 )
                 total_size += size
@@ -752,6 +765,7 @@ class CodeExecutor:
         timeout: int,
         job_type: JobType,
         extra_requirements: Optional[List[str]] = None,
+        job_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Run Docker container with security restrictions.
@@ -810,17 +824,24 @@ class CodeExecutor:
                 "For true network isolation, use pre-built images via 'tako-vm build'."
             )
 
+        # Generate container name for tracking (allows cleanup on timeout)
+        container_name = generate_container_name("tako", job_id)
+
         cmd = [
             "docker",
             "run",
             "--rm",
+            f"--name={container_name}",
             f"--runtime={self._runtime}",
             "--init",  # Faster signal handling with tini
             "--read-only",
             "--cap-drop=ALL",
             "--cap-add=SETUID",  # Required for gosu to switch user
             "--cap-add=SETGID",  # Required for gosu to switch user
-            "--security-opt=no-new-privileges",
+            # Security note: We don't use --security-opt=no-new-privileges because gosu requires
+            # setuid to drop from root to sandbox user (uid 1000). This is a one-way privilege drop:
+            # after gosu exec's the user code, the process runs as unprivileged sandbox user with
+            # no capability to regain root. The container also has all other caps dropped.
         ]
 
         # Mount uv cache volume for faster repeated installs
@@ -862,10 +883,13 @@ class CodeExecutor:
             ]
         )
 
-        # Add seccomp profile if enabled and exists
+        # Add seccomp profile if enabled and exists (native Linux only)
+        # Docker Desktop (macOS/Windows) has issues with custom seccomp profiles
         if self.config.enable_seccomp and self.config.seccomp_profile_path:
-            if self.config.seccomp_profile_path.exists():
+            if is_native_linux() and self.config.seccomp_profile_path.exists():
                 cmd.append(f"--security-opt=seccomp={self.config.seccomp_profile_path}")
+            elif not is_native_linux():
+                logger.debug("Skipping custom seccomp profile on Docker Desktop")
 
         # Add environment variables from job type (with validation)
         for key, value in job_type.environment.items():
@@ -923,6 +947,8 @@ class CodeExecutor:
 
         except subprocess.TimeoutExpired:
             # Timeout is not a Docker failure, don't record with circuit breaker
+            # Kill the orphaned container (subprocess died but container keeps running)
+            kill_container(container_name)
             return {
                 "success": False,
                 "error": f"Execution timeout exceeded ({timeout}s)",
@@ -943,6 +969,8 @@ class CodeExecutor:
             }
         except Exception as e:
             # Other errors might be Docker-related
+            # Kill container in case it was started before the error
+            kill_container(container_name)
             error_msg = str(e).lower()
             if "docker" in error_msg or "daemon" in error_msg or "connection" in error_msg:
                 circuit_breaker.record_failure(str(e))

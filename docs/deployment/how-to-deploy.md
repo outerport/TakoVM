@@ -34,6 +34,17 @@ Any cloud provider works (AWS EC2, GCP, DigitalOcean, etc.):
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 
+# Install gVisor (recommended for strong isolation)
+ARCH=$(dpkg --print-architecture)
+curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list > /dev/null
+sudo apt-get update && sudo apt-get install -y runsc
+sudo runsc install
+sudo systemctl restart docker
+
+# Verify gVisor works
+docker run --runtime=runsc --rm hello-world
+
 # Install Python and uv
 sudo apt update
 sudo apt install -y python3
@@ -46,6 +57,9 @@ cd tako-vm
 # Install Tako VM with server dependencies
 uv pip install ".[server]"
 ```
+
+!!! note "gVisor is optional but recommended"
+    Tako VM uses gVisor by default (`security_mode: strict`). If gVisor is not installed, set `security_mode: permissive` in your config or use `TAKO_VM_SECURITY_MODE=permissive`.
 
 ### 3. Build the Executor Image
 
@@ -67,6 +81,8 @@ nano tako_vm.yaml
 # tako_vm.yaml
 production_mode: true
 max_workers: 4
+security_mode: strict      # Require gVisor (recommended)
+container_runtime: runsc   # Use gVisor runtime
 ```
 
 ### 5. Run

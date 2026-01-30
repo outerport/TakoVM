@@ -5,6 +5,7 @@
 - **Docker** 20.10 or later
 - **Python** 3.9 or later
 - **[uv](https://github.com/astral-sh/uv)**
+- **gVisor** (recommended for production) - See [gVisor installation](https://gvisor.dev/docs/user_guide/install/)
 
 ## Install Tako VM
 
@@ -143,6 +144,29 @@ If port 8000 is busy:
 ```bash
 # Use a different port
 tako-vm server --port 8001
+```
+
+### gVisor Not Available
+
+If you see "RuntimeUnavailableError: gVisor not available" errors:
+
+```bash
+# Option 1: Install gVisor (recommended for production)
+# See: https://gvisor.dev/docs/user_guide/install/
+
+# Option 2: Use permissive mode for development
+export TAKO_VM_SECURITY_MODE=permissive
+tako-vm server
+
+# Or in config file:
+# security_mode: permissive
+```
+
+For macOS/Windows development, use the included Lima VM with gVisor pre-installed:
+
+```bash
+limactl start lima-gvisor.yaml
+limactl shell tako-gvisor
 ```
 
 ### Config Validation Errors

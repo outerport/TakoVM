@@ -12,6 +12,14 @@ When you submit code to Tako VM:
 4. **Output Collected** - stdout, stderr, and `/output/` files are captured
 5. **Container Destroyed** - Container is removed (ephemeral)
 
+!!! tip "Key Paths"
+    | Path | Access | Purpose |
+    |------|--------|---------|
+    | `/input/data.json` | Read | Your `input_data` as JSON |
+    | `/output/result.json` | Write | Auto-parsed into response `output` field |
+    | `/output/*` | Write | Other files saved as downloadable **artifacts** |
+    | `/tmp/` | Write | Temporary files (not persisted) |
+
 ## Basic Request
 
 ```python

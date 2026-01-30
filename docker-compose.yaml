@@ -44,6 +44,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.executor
     image: code-executor:latest
+    entrypoint: []  # Override entrypoint so we can just echo
     command: ["echo", "Executor image built"]
     profiles:
       - build

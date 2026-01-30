@@ -18,9 +18,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from tako_vm.execution.docker import generate_container_name, kill_container
 
 logger = logging.getLogger(__name__)
 
@@ -271,8 +274,6 @@ class Sandbox:
             print(result.stdout)  # "Sum: 15"
             print(result.output)  # {'sum': 15}
         """
-        import time
-
         self._ensure_image()
 
         timeout = timeout or self.config.timeout
@@ -303,7 +304,7 @@ class Sandbox:
             input_file.chmod(0o444)
 
             # Build docker command
-            cmd = self._build_docker_command(
+            cmd, container_name = self._build_docker_command(
                 code_dir=code_dir,
                 input_dir=input_dir,
                 output_dir=output_dir,
@@ -342,6 +343,8 @@ class Sandbox:
                 )
 
             except subprocess.TimeoutExpired:
+                # Kill the orphaned container (subprocess died but container keeps running)
+                kill_container(container_name)
                 duration_ms = int((time.time() - start_time) * 1000)
                 return SandboxResult(
                     stdout="",
@@ -366,18 +369,29 @@ class Sandbox:
         output_dir: Path,
         timeout: int,
         requirements: Optional[List[str]] = None,
-    ) -> List[str]:
-        """Build the docker run command with security flags."""
+    ) -> Tuple[List[str], str]:
+        """Build the docker run command with security flags.
+
+        Returns:
+            Tuple of (command, container_name) for cleanup on timeout.
+        """
+        # Generate container name for tracking (allows cleanup on timeout)
+        container_name = generate_container_name("tako-sandbox")
+
         cmd = [
             "docker",
             "run",
             "--rm",
+            f"--name={container_name}",
             "--init",  # Faster signal handling with tini
             "--read-only",
             "--cap-drop=ALL",
             "--cap-add=SETUID",  # Required for gosu to switch user
             "--cap-add=SETGID",  # Required for gosu to switch user
-            "--security-opt=no-new-privileges",
+            # Security note: We don't use --security-opt=no-new-privileges because gosu requires
+            # setuid to drop from root to sandbox user (uid 1000). This is a one-way privilege drop:
+            # after gosu exec's the user code, the process runs as unprivileged sandbox user with
+            # no capability to regain root. The container also has all other caps dropped.
         ]
 
         # Network isolation
@@ -437,7 +451,7 @@ class Sandbox:
         # Image
         cmd.append(self.config.image)
 
-        return cmd
+        return cmd, container_name
 
 
 # Convenience function for simple usage

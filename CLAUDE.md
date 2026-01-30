@@ -9,6 +9,7 @@ tako_vm/
 ├── server/app.py        # FastAPI routes
 ├── server/queue.py      # WorkerPool, async jobs
 ├── execution/worker.py  # CodeExecutor (runs Docker containers)
+├── execution/docker.py  # Docker utilities (container naming, cleanup)
 ├── execution/builder.py # ContainerBuilder (for pre-built images)
 ├── config.py            # Pydantic config (TakoVMConfig)
 ├── models.py            # ExecutionRecord, JobStatus
@@ -17,6 +18,7 @@ docker/
 ├── Dockerfile.executor  # Base executor image (uv + gosu)
 ├── Dockerfile.server    # API server image
 ├── entrypoint.sh        # Installs deps at runtime, runs code as sandbox user, writes timing to /output/.tako_phase
+lima-gvisor.yaml         # Lima VM config for macOS/Windows development with gVisor
 ```
 
 ## Key Concepts
@@ -30,6 +32,26 @@ docker/
 - **Queue job** status: `pending`, `running`, `completed` (different from ExecutionRecord)
 - **UV_CACHE_VOLUME**: Docker volume `tako-uv-cache` speeds up repeated installs
 - Tests use temp database via `TAKO_VM_DATA_DIR` env var for isolation
+
+## Code Quality
+
+**IMPORTANT**: Always run lint checks before completing any Python code changes.
+
+```bash
+# Run ruff linter (required before committing)
+ruff check tako_vm/ tests/
+
+# Auto-fix lint issues
+ruff check --fix tako_vm/ tests/
+
+# Format code
+ruff format tako_vm/ tests/
+```
+
+When modifying Python code:
+1. Run `ruff check` on changed files before considering the task complete
+2. Fix any lint errors before committing
+3. If lint errors cannot be resolved, explain why and get user approval
 
 ## Build & Test
 

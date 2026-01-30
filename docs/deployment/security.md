@@ -63,11 +63,27 @@ Writable locations:
 
 ### Capability Dropping
 
-All Linux capabilities are dropped:
+All Linux capabilities are dropped except those required for privilege dropping:
 
 ```bash
-docker run --cap-drop=ALL --security-opt=no-new-privileges ...
+docker run --cap-drop=ALL --cap-add=SETUID --cap-add=SETGID ...
 ```
+
+**Note on `no-new-privileges`:** Tako VM does NOT use `--security-opt=no-new-privileges` because it conflicts with `gosu`, which is used to drop from root to the sandbox user after installing dependencies. The privilege drop flow is:
+
+1. Container starts as root (required for dependency installation)
+2. `gosu` drops privileges to sandbox user (uid 1000)
+3. User code executes as unprivileged sandbox user
+
+This trade-off is necessary because:
+- Dependencies may require root to install (e.g., system packages)
+- `gosu` uses setuid to switch users securely
+- `no-new-privileges` blocks setuid, breaking the privilege drop
+
+The risk is mitigated by:
+- gVisor runtime (userspace kernel) blocks most privilege escalation
+- Seccomp profile restricts dangerous syscalls
+- Code runs as non-root after the privilege drop
 
 ### Non-Root Execution
 
@@ -286,9 +302,92 @@ Tako VM does NOT protect against:
 | Timing attacks | Execution time visible |
 
 For higher security, consider:
-- gVisor or Kata Containers
+- gVisor (default in Tako VM)
+- Kata Containers
 - Dedicated execution hosts
 - VM-based isolation
+
+## gVisor Runtime
+
+Tako VM uses gVisor (runsc) by default for strong container isolation. gVisor provides a userspace kernel that intercepts and emulates syscalls, adding a significant security boundary beyond standard Docker.
+
+### Why gVisor?
+
+| Benefit | Description |
+|---------|-------------|
+| Userspace kernel | Syscalls handled in userspace, not host kernel |
+| Reduced attack surface | Most kernel vulnerabilities don't affect gVisor |
+| Container escape prevention | Much harder to escape to host |
+| Production-tested | Used by Google Cloud Run, GKE Sandbox |
+
+### Installation
+
+gVisor is required for `strict` security mode (default). Install it following the [official gVisor installation guide](https://gvisor.dev/docs/user_guide/install/).
+
+**Ubuntu/Debian:**
+```bash
+curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list > /dev/null
+sudo apt-get update && sudo apt-get install -y runsc
+sudo runsc install
+sudo systemctl restart docker
+```
+
+**Verify installation:**
+```bash
+docker run --runtime=runsc --rm hello-world
+```
+
+### Configuration
+
+```yaml
+# tako_vm.yaml
+container_runtime: runsc   # 'runsc' (gVisor) or 'runc' (standard Docker)
+security_mode: strict      # 'strict' (require gVisor) or 'permissive' (fallback)
+```
+
+**Security modes:**
+
+- **strict** (default): Fails with `RuntimeUnavailableError` if gVisor is not available. Recommended for production.
+- **permissive**: Falls back to standard runc runtime with a warning. Useful for development.
+
+**Environment variable override (useful for testing):**
+```bash
+TAKO_VM_SECURITY_MODE=permissive pytest tests/ -v
+```
+
+### Development on macOS/Windows
+
+gVisor only runs on Linux. For macOS/Windows development, Tako VM includes a Lima VM configuration with gVisor pre-installed:
+
+```bash
+# Start the VM
+limactl start lima-gvisor.yaml
+
+# Enter the VM
+limactl shell tako-gvisor
+
+# Run Tako VM with gVisor
+cd ~/tako-vm
+pytest tests/ -v
+```
+
+The Lima VM provides:
+- Ubuntu 24.04 with Docker and gVisor pre-installed
+- 4 CPUs, 8GB RAM, 50GB disk
+- Home directory mounted for code access
+
+### gVisor vs runc Trade-offs
+
+| Aspect | gVisor (runsc) | Standard (runc) |
+|--------|----------------|-----------------|
+| Security | Strong (userspace kernel) | Good (kernel namespaces) |
+| Performance | ~5-15% overhead | Native speed |
+| Compatibility | Most Python code works | Full compatibility |
+| Kernel exploits | Protected | Vulnerable |
+| Setup complexity | Requires installation | Built into Docker |
+
+**Recommendation:** Use gVisor (`strict` mode) for production and any environment running untrusted or AI-generated code. Use `permissive` mode only for development when gVisor is not available.
 
 ## Docker Isolation Limitations
 
@@ -391,12 +490,19 @@ This separates the API server from the execution environment entirely, but adds 
 
 ## Security Checklist
 
+- [ ] Install gVisor and use `security_mode: strict`
 - [ ] Enable `enable_seccomp: true`
-- [ ] Enable `enable_userns: true` (non-root execution)
 - [ ] Use HTTPS in production
 - [ ] Set appropriate resource limits
-- [ ] Keep Docker updated
+- [ ] Keep Docker and gVisor updated
 - [ ] Minimize use of `network_enabled: true` jobs
 - [ ] Monitor for anomalies
 - [ ] Review execution logs
 - [ ] Test security controls regularly
+
+### gVisor-Specific Checks
+
+- [ ] Verify gVisor is working: `docker run --runtime=runsc --rm hello-world`
+- [ ] Set `container_runtime: runsc` in config
+- [ ] Set `security_mode: strict` for production
+- [ ] Test your workloads with gVisor (some edge cases may differ)

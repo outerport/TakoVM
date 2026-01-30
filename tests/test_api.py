@@ -228,3 +228,411 @@ class TestDLQ:
         assert "has_more" in data
         assert "count" in data
         assert isinstance(data["items"], list)
+
+
+class TestRerun:
+    """Tests for /jobs/{job_id}/rerun endpoint."""
+
+    def test_rerun_completed_job(self, client):
+        """Can rerun a completed job with same code and inputs."""
+        # First, create and complete a job
+        code = """
+import json
+with open("/input/data.json") as f:
+    data = json.load(f)
+result = {"value": data["x"] * 2}
+with open("/output/result.json", "w") as f:
+    json.dump(result, f)
+"""
+        submit_response = client.post(
+            "/execute/async", json={"code": code, "input_data": {"x": 21}}
+        )
+        assert submit_response.status_code == 200
+        original_job_id = submit_response.json()["job_id"]
+
+        # Wait for completion
+        result_response = client.get(
+            f"/jobs/{original_job_id}/result", params={"wait": True, "timeout": 60}
+        )
+        assert result_response.status_code == 200
+        assert result_response.json()["status"] == "succeeded"
+        assert result_response.json()["output"] == {"value": 42}
+
+        # Rerun the job
+        rerun_response = client.post(
+            f"/jobs/{original_job_id}/rerun",
+            json={},
+        )
+        assert rerun_response.status_code == 200
+        rerun_data = rerun_response.json()
+        assert "job_id" in rerun_data
+        assert rerun_data["status"] == "queued"
+        new_job_id = rerun_data["job_id"]
+        assert new_job_id != original_job_id
+
+        # Wait for rerun to complete and verify same result
+        rerun_result = client.get(
+            f"/jobs/{new_job_id}/result", params={"wait": True, "timeout": 60}
+        )
+        assert rerun_result.status_code == 200
+        rerun_result_data = rerun_result.json()
+        assert rerun_result_data["status"] == "succeeded"
+        assert rerun_result_data["output"] == {"value": 42}
+
+    def test_rerun_with_full_view_shows_lineage(self, client):
+        """Rerun job has parent_execution_id and relationship in full view."""
+        # Create and complete original job
+        code = "print('original')"
+        submit_response = client.post("/execute/async", json={"code": code})
+        original_job_id = submit_response.json()["job_id"]
+
+        client.get(f"/jobs/{original_job_id}/result", params={"wait": True, "timeout": 60})
+
+        # Rerun
+        rerun_response = client.post(f"/jobs/{original_job_id}/rerun", json={})
+        new_job_id = rerun_response.json()["job_id"]
+
+        # Wait and get full view
+        client.get(f"/jobs/{new_job_id}/result", params={"wait": True, "timeout": 60})
+        full_response = client.get(f"/jobs/{new_job_id}/result", params={"view": "full"})
+
+        assert full_response.status_code == 200
+        data = full_response.json()
+        assert data["parent_execution_id"] == original_job_id
+        assert data["relationship"] == "rerun"
+
+    def test_rerun_nonexistent_job(self, client):
+        """Rerun of non-existent job returns 404."""
+        response = client.post("/jobs/nonexistent-id/rerun", json={})
+        assert response.status_code == 404
+
+    def test_rerun_pending_job_fails(self, client):
+        """Cannot rerun a job that hasn't completed yet."""
+        # Submit a long-running job
+        code = "import time; time.sleep(60)"
+        submit_response = client.post("/execute/async", json={"code": code})
+        job_id = submit_response.json()["job_id"]
+
+        # Try to rerun immediately (job still running)
+        import time
+        time.sleep(0.5)  # Give it time to start
+        rerun_response = client.post(f"/jobs/{job_id}/rerun", json={})
+
+        # Should fail because job hasn't completed
+        assert rerun_response.status_code == 400
+
+        # Cancel the job to clean up
+        client.post(f"/jobs/{job_id}/cancel")
+
+
+class TestFork:
+    """Tests for /jobs/{job_id}/fork endpoint."""
+
+    def test_fork_with_new_code(self, client):
+        """Can fork a job with new code but same inputs."""
+        # Create and complete original job
+        original_code = """
+import json
+with open("/input/data.json") as f:
+    data = json.load(f)
+result = {"operation": "multiply", "value": data["x"] * 2}
+with open("/output/result.json", "w") as f:
+    json.dump(result, f)
+"""
+        submit_response = client.post(
+            "/execute/async", json={"code": original_code, "input_data": {"x": 10}}
+        )
+        original_job_id = submit_response.json()["job_id"]
+
+        # Wait for completion
+        result_response = client.get(
+            f"/jobs/{original_job_id}/result", params={"wait": True, "timeout": 60}
+        )
+        assert result_response.status_code == 200
+        assert result_response.json()["output"] == {"operation": "multiply", "value": 20}
+
+        # Fork with different code (add instead of multiply)
+        new_code = """
+import json
+with open("/input/data.json") as f:
+    data = json.load(f)
+result = {"operation": "add", "value": data["x"] + 100}
+with open("/output/result.json", "w") as f:
+    json.dump(result, f)
+"""
+        fork_response = client.post(
+            f"/jobs/{original_job_id}/fork",
+            json={"code": new_code},
+        )
+        assert fork_response.status_code == 200
+        fork_data = fork_response.json()
+        assert "job_id" in fork_data
+        assert fork_data["status"] == "queued"
+        forked_job_id = fork_data["job_id"]
+
+        # Wait for fork to complete
+        fork_result = client.get(
+            f"/jobs/{forked_job_id}/result", params={"wait": True, "timeout": 60}
+        )
+        assert fork_result.status_code == 200
+        fork_result_data = fork_result.json()
+        assert fork_result_data["status"] == "succeeded"
+        # Same input (x=10) but different operation
+        assert fork_result_data["output"] == {"operation": "add", "value": 110}
+
+    def test_fork_shows_lineage(self, client):
+        """Fork job has parent_execution_id and relationship='fork' in full view."""
+        # Create original job
+        code = "print('v1')"
+        submit_response = client.post("/execute/async", json={"code": code})
+        original_job_id = submit_response.json()["job_id"]
+
+        client.get(f"/jobs/{original_job_id}/result", params={"wait": True, "timeout": 60})
+
+        # Fork
+        fork_response = client.post(
+            f"/jobs/{original_job_id}/fork", json={"code": "print('v2')"}
+        )
+        forked_job_id = fork_response.json()["job_id"]
+
+        # Wait and get full view
+        client.get(f"/jobs/{forked_job_id}/result", params={"wait": True, "timeout": 60})
+        full_response = client.get(f"/jobs/{forked_job_id}/result", params={"view": "full"})
+
+        assert full_response.status_code == 200
+        data = full_response.json()
+        assert data["parent_execution_id"] == original_job_id
+        assert data["relationship"] == "fork"
+
+    def test_fork_nonexistent_job(self, client):
+        """Fork of non-existent job returns 404."""
+        response = client.post(
+            "/jobs/nonexistent-id/fork", json={"code": "print('test')"}
+        )
+        assert response.status_code == 404
+
+    def test_fork_requires_code(self, client):
+        """Fork requires new code in request body."""
+        # Create and complete a job
+        submit_response = client.post("/execute/async", json={"code": "print(1)"})
+        job_id = submit_response.json()["job_id"]
+        client.get(f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60})
+
+        # Try to fork without code
+        response = client.post(f"/jobs/{job_id}/fork", json={})
+        assert response.status_code == 422  # Validation error
+
+
+class TestCancel:
+    """Tests for /jobs/{job_id}/cancel endpoint."""
+
+    def test_cancel_running_job(self, client):
+        """Can cancel a running job."""
+        # Submit a long-running job
+        code = """
+import time
+for i in range(60):
+    print(f"iteration {i}")
+    time.sleep(1)
+"""
+        submit_response = client.post("/execute/async", json={"code": code})
+        assert submit_response.status_code == 200
+        job_id = submit_response.json()["job_id"]
+
+        # Give it time to start
+        import time
+        time.sleep(1)
+
+        # Cancel the job
+        cancel_response = client.post(f"/jobs/{job_id}/cancel")
+        assert cancel_response.status_code == 200
+        cancel_data = cancel_response.json()
+        assert cancel_data["status"] == "cancelled"
+        assert cancel_data["job_id"] == job_id
+
+    def test_cancel_nonexistent_job(self, client):
+        """Cancel of non-existent job returns 404."""
+        response = client.post("/jobs/nonexistent-id/cancel")
+        assert response.status_code == 404
+
+    def test_cancel_completed_job_fails(self, client):
+        """Cannot cancel an already completed job."""
+        # Create and wait for job to complete
+        submit_response = client.post("/execute/async", json={"code": "print('quick')"})
+        job_id = submit_response.json()["job_id"]
+
+        # Wait for completion
+        client.get(f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60})
+
+        # Try to cancel - should fail
+        cancel_response = client.post(f"/jobs/{job_id}/cancel")
+        assert cancel_response.status_code == 404
+
+
+class TestArtifacts:
+    """Tests for /jobs/{job_id}/artifacts/{name} endpoint."""
+
+    def test_download_artifact(self, client):
+        """Can download an artifact from a completed job."""
+        code = """
+with open("/output/report.txt", "w") as f:
+    f.write("Hello from Tako VM!")
+"""
+        submit_response = client.post("/execute/async", json={"code": code})
+        job_id = submit_response.json()["job_id"]
+
+        # Wait for completion
+        result_response = client.get(
+            f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60}
+        )
+        assert result_response.status_code == 200
+        assert result_response.json()["status"] == "succeeded"
+
+        # Download the artifact
+        artifact_response = client.get(f"/jobs/{job_id}/artifacts/report.txt")
+        assert artifact_response.status_code == 200
+        assert artifact_response.text == "Hello from Tako VM!"
+        assert "ETag" in artifact_response.headers
+
+    def test_artifact_head_request(self, client):
+        """HEAD request returns artifact metadata without content."""
+        code = """
+with open("/output/data.csv", "w") as f:
+    f.write("id,value\\n1,100\\n2,200\\n")
+"""
+        submit_response = client.post("/execute/async", json={"code": code})
+        job_id = submit_response.json()["job_id"]
+
+        client.get(f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60})
+
+        # HEAD request
+        head_response = client.head(f"/jobs/{job_id}/artifacts/data.csv")
+        assert head_response.status_code == 200
+        assert "Content-Length" in head_response.headers
+        assert "ETag" in head_response.headers
+        assert head_response.content == b""  # No body
+
+    def test_artifact_not_found(self, client):
+        """Non-existent artifact returns 404."""
+        code = "print('no artifacts')"
+        submit_response = client.post("/execute/async", json={"code": code})
+        job_id = submit_response.json()["job_id"]
+
+        client.get(f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60})
+
+        response = client.get(f"/jobs/{job_id}/artifacts/nonexistent.txt")
+        assert response.status_code == 404
+
+    def test_artifact_job_not_found(self, client):
+        """Artifact request for non-existent job returns 404."""
+        response = client.get("/jobs/nonexistent-id/artifacts/file.txt")
+        assert response.status_code == 404
+
+    def test_artifact_persisted_to_storage(self, client):
+        """Artifacts are copied to permanent storage, surviving temp cleanup."""
+        from tako_vm.config import get_config
+
+        code = """
+with open("/output/persisted.txt", "w") as f:
+    f.write("I should persist!")
+"""
+        submit_response = client.post("/execute/async", json={"code": code})
+        job_id = submit_response.json()["job_id"]
+
+        # Wait for completion (temp workspace is cleaned up after this)
+        result_response = client.get(
+            f"/jobs/{job_id}/result", params={"wait": True, "timeout": 60}
+        )
+        assert result_response.status_code == 200
+        assert result_response.json()["status"] == "succeeded"
+
+        # Verify artifact exists at permanent storage location
+        config = get_config()
+        artifact_path = config.data_dir / "runs" / job_id / "artifacts" / "persisted.txt"
+        assert artifact_path.exists(), "Artifact should be copied to permanent storage"
+        assert artifact_path.read_text() == "I should persist!"
+
+        # Also verify it's still downloadable via API
+        artifact_response = client.get(f"/jobs/{job_id}/artifacts/persisted.txt")
+        assert artifact_response.status_code == 200
+        assert artifact_response.text == "I should persist!"
+
+
+class TestIdempotency:
+    """Tests for idempotency key behavior."""
+
+    def test_idempotent_request_returns_same_job(self, client):
+        """Same idempotency key returns the same job ID."""
+        idempotency_key = "test-idem-key-12345"
+
+        # First request
+        first_response = client.post(
+            "/execute/async",
+            json={"code": "print('hello')", "idempotency_key": idempotency_key},
+        )
+        assert first_response.status_code == 200
+        first_job_id = first_response.json()["job_id"]
+
+        # Second request with same key
+        second_response = client.post(
+            "/execute/async",
+            json={"code": "print('hello')", "idempotency_key": idempotency_key},
+        )
+        assert second_response.status_code == 200
+        second_job_id = second_response.json()["job_id"]
+
+        # Should be the same job
+        assert first_job_id == second_job_id
+
+    def test_idempotency_key_reuse_with_different_payload_fails(self, client):
+        """Reusing idempotency key with different payload returns 409 Conflict."""
+        idempotency_key = "test-conflict-key-67890"
+
+        # First request
+        first_response = client.post(
+            "/execute/async",
+            json={"code": "print('first')", "idempotency_key": idempotency_key},
+        )
+        assert first_response.status_code == 200
+
+        # Second request with same key but different code
+        second_response = client.post(
+            "/execute/async",
+            json={"code": "print('different')", "idempotency_key": idempotency_key},
+        )
+        assert second_response.status_code == 409
+
+    def test_different_idempotency_keys_create_different_jobs(self, client):
+        """Different idempotency keys create separate jobs."""
+        # First request
+        first_response = client.post(
+            "/execute/async",
+            json={"code": "print('test')", "idempotency_key": "key-one-abc"},
+        )
+        first_job_id = first_response.json()["job_id"]
+
+        # Second request with different key
+        second_response = client.post(
+            "/execute/async",
+            json={"code": "print('test')", "idempotency_key": "key-two-xyz"},
+        )
+        second_job_id = second_response.json()["job_id"]
+
+        # Should be different jobs
+        assert first_job_id != second_job_id
+
+    def test_idempotency_key_validation(self, client):
+        """Idempotency key must be alphanumeric and 8-255 chars."""
+        # Too short
+        response = client.post(
+            "/execute/async",
+            json={"code": "print(1)", "idempotency_key": "short"},
+        )
+        assert response.status_code == 422
+
+        # Invalid characters
+        response = client.post(
+            "/execute/async",
+            json={"code": "print(1)", "idempotency_key": "invalid key with spaces"},
+        )
+        assert response.status_code == 422

@@ -93,7 +93,7 @@ print(response.json())
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────────────┐
-│   Client    │────▶│  Tako VM    │────▶│   Docker Container  │
+│   Client    │────▶│  Tako VM    │────▶│   Docker + gVisor   │
 │  (HTTP/SDK) │     │   Server    │     │   (Isolated)        │
 └─────────────┘     └─────────────┘     └─────────────────────┘
                           │
@@ -104,8 +104,12 @@ print(response.json())
                     └─────────────┘
 ```
 
+**Security:** Tako VM uses gVisor (runsc) by default for strong container isolation with a userspace kernel.
+
 ## Next Steps
 
 - [Installation](getting-started/installation.md) - Set up Tako VM
 - [Quick Start](getting-started/quickstart.md) - Run your first code
+- [Basic Execution](guide/basic-execution.md) - Input/output patterns, artifacts
+- [Async Jobs](guide/async-jobs.md) - Long-running tasks, artifact downloads
 - [API Reference](api/rest.md) - Full API documentation

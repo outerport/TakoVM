@@ -7,6 +7,8 @@ These tests verify the direct Docker sandbox execution without a server.
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from tako_vm.sandbox import Sandbox, SandboxResult
 from tako_vm.sandbox import run as sandbox_run
 
@@ -269,8 +271,13 @@ print(f"version: {requests.__version__}")
         assert "version:" in result.stdout
 
 
+@pytest.mark.requires_host_mounts
 class TestSandboxPackageDirs:
-    """Tests for local package mounting."""
+    """Tests for local package mounting.
+
+    These tests require mounting host paths into Docker containers,
+    which doesn't work in VM environments (e.g., Lima on macOS).
+    """
 
     def test_sandbox_with_package_dirs(self):
         """Mount local directory as package."""

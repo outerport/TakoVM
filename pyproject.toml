@@ -97,6 +97,12 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "strict"
 filterwarnings = [
     "ignore:urllib3 v2 only supports OpenSSL",
+]
+markers = [
+    "requires_host_mounts: tests that require mounting host paths (skip in VM environments)",
+    "requires_gvisor: tests that require gVisor runtime",
+    "slow: marks tests as slow",
 ]

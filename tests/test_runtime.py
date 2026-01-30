@@ -209,3 +209,28 @@ class TestEnvVarNormalization:
         monkeypatch.setenv("TAKO_VM_CONTAINER_RUNTIME", "RUNC")
         config = load_config()
         assert config.container_runtime == "runc"
+
+
+class TestPlatformDetection:
+    """Tests for platform detection (native Linux vs Docker Desktop)."""
+
+    def test_is_native_linux_on_linux(self, monkeypatch):
+        """is_native_linux() returns True on Linux."""
+        monkeypatch.setattr("platform.system", lambda: "Linux")
+        from tako_vm.execution.worker import is_native_linux
+
+        assert is_native_linux() is True
+
+    def test_is_native_linux_on_macos(self, monkeypatch):
+        """is_native_linux() returns False on macOS (Docker Desktop)."""
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        from tako_vm.execution.worker import is_native_linux
+
+        assert is_native_linux() is False
+
+    def test_is_native_linux_on_windows(self, monkeypatch):
+        """is_native_linux() returns False on Windows (Docker Desktop)."""
+        monkeypatch.setattr("platform.system", lambda: "Windows")
+        from tako_vm.execution.worker import is_native_linux
+
+        assert is_native_linux() is False

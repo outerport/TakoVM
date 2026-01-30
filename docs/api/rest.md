@@ -2,6 +2,20 @@
 
 Complete reference for the Tako VM HTTP API.
 
+## Quick Reference
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/execute` | POST | **Sync** - Execute code, block until complete |
+| `/execute/async` | POST | **Async** - Submit job, return `job_id` immediately |
+| `/jobs/{id}` | GET | Get job status |
+| `/jobs/{id}/result` | GET | Get result (add `?wait=true` to block) |
+| `/jobs/{id}/artifacts/{name}` | GET | Download output file |
+| `/jobs/{id}/cancel` | POST | Cancel running job |
+| `/jobs/{id}/rerun` | POST | Re-execute with same code/inputs |
+| `/jobs/{id}/fork` | POST | Re-execute with modified code |
+| `/health` | GET | Health check with queue stats |
+
 ## Base URL
 
 ```text

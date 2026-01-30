@@ -50,12 +50,12 @@ Tako VM executes Python code in isolated Docker containers with:
 - **Execution History** - Full job records with timing, artifacts, and error details
 
 **Security layers applied to every container:**
+- gVisor runtime (userspace kernel) by default
 - `--network=none` (isolated by default)
 - `--read-only` filesystem
-- `--cap-drop=ALL`
-- `--security-opt=no-new-privileges`
+- `--cap-drop=ALL` (except SETUID/SETGID for privilege dropping)
 - Seccomp syscall filtering
-- Non-root execution (uid 1000)
+- Non-root execution (uid 1000 via gosu)
 
 ## Installation
 
@@ -454,13 +454,14 @@ See [docs/api/rest.md](docs/api/rest.md) for complete API reference and [docs/ar
 
 | Feature | Description |
 |---------|-------------|
+| gVisor Runtime | Userspace kernel isolation (default, `runsc`) |
+| Security Modes | `strict` (require gVisor) or `permissive` (fallback to runc) |
 | Network Isolation | `--network=none` by default (bridge for dep install) |
 | Read-Only Filesystem | `--read-only` with tmpfs for /tmp |
 | Seccomp Filtering | Hardened allowlist blocking 47+ dangerous syscalls (see below) |
 | Resource Limits | Memory, CPU, file size, process count |
 | Non-Root Execution | Code runs as uid 1000 (sandbox user) via gosu |
-| Capability Drop | `--cap-drop=ALL` |
-| No Privilege Escalation | `--security-opt=no-new-privileges` |
+| Capability Drop | `--cap-drop=ALL` (except SETUID/SETGID for gosu) |
 | Dependency Caching | Shared uv cache volume across containers |
 
 ### Seccomp Profile
@@ -498,9 +499,26 @@ The profile allows ~200 syscalls required for normal Python execution (file I/O,
 - ✅ **For user-submitted code:** Add rate limiting and audit logging
 - ✅ **For untrusted/AI code:** Use external secret manager (AWS Secrets Manager, Vault), don't pass secrets in job submission
 
-**Advanced isolation options:**
+**gVisor is the default runtime:**
+Tako VM uses gVisor (`runsc`) by default for strong isolation. Configure security modes:
+
+```yaml
+# Production (require gVisor)
+security_mode: strict
+container_runtime: runsc
+
+# Development (allow fallback if gVisor not available)
+security_mode: permissive
+container_runtime: runsc
+```
+
+Or via environment variable for testing:
+```bash
+TAKO_VM_SECURITY_MODE=permissive pytest tests/ -v
+```
+
+**Additional isolation options:**
 - **AppArmor/SELinux** (Linux only) - Can block `/proc` reads if needed
-- **gVisor** - User-space kernel for stronger isolation (~50ms overhead)
 - **Kata Containers** - VM-level isolation for multi-tenant deployments
 
 See [docs/security/honest-assessment.md](docs/security/honest-assessment.md) for detailed threat model analysis.

@@ -54,7 +54,11 @@ queue_wait_timeout: 1.0   # Queue wait timeout (seconds)
 # ==============================================================================
 docker_image: code-executor:latest
 enable_seccomp: true      # syscall filtering
-enable_userns: true       # non-root execution
+enable_userns: false      # user namespace (disabled for gosu compatibility)
+
+# gVisor runtime (strong isolation)
+container_runtime: runsc  # 'runsc' (gVisor) or 'runc' (standard Docker)
+security_mode: strict     # 'strict' (require gVisor) or 'permissive' (fallback to runc)
 
 container_limits:
   pids_limit: 100
@@ -121,6 +125,12 @@ export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/executions.db
 # Override workspace directory for job file storage
 export TAKO_VM_WORKSPACE=/var/tmp/tako_vm
 
+# Security mode (strict or permissive)
+export TAKO_VM_SECURITY_MODE=permissive  # Allow fallback to runc if gVisor unavailable
+
+# Container runtime (runsc or runc)
+export TAKO_VM_CONTAINER_RUNTIME=runsc   # Use gVisor for strong isolation
+
 # XDG Base Directory support
 export XDG_DATA_HOME=/custom/data/path  # Tako VM will use $XDG_DATA_HOME/tako_vm
 ```
@@ -131,6 +141,8 @@ export XDG_DATA_HOME=/custom/data/path  # Tako VM will use $XDG_DATA_HOME/tako_v
 | `TAKO_VM_DATA_DIR` | Data directory | `~/.tako_vm` or `$XDG_DATA_HOME/tako_vm` |
 | `TAKO_VM_DATABASE_FILE` | SQLite database path | `$DATA_DIR/executions.db` |
 | `TAKO_VM_WORKSPACE` | Job workspace directory | System temp directory |
+| `TAKO_VM_SECURITY_MODE` | Security mode (`strict` or `permissive`) | `strict` |
+| `TAKO_VM_CONTAINER_RUNTIME` | Container runtime (`runsc` or `runc`) | `runsc` |
 | `XDG_DATA_HOME` | XDG base data directory | `~/.local/share` |
 
 ## Job Types
@@ -209,6 +221,50 @@ container_limits:
   tmpfs_size: "64m"
 ```
 
+## Timeout Configuration
+
+Tako VM separates startup time from code execution time:
+
+| Option | Description | Default | Range |
+|--------|-------------|---------|-------|
+| `default_timeout` | Code execution timeout (seconds) | `30` | 1-3600 |
+| `max_timeout` | Maximum allowed execution timeout | `300` | 1-86400 |
+| `default_startup_timeout` | Container startup + dep install timeout | `120` | 10-600 |
+| `max_startup_timeout` | Maximum allowed startup timeout | `600` | 30-1800 |
+
+## gVisor and Security Modes
+
+Tako VM uses gVisor (runsc) by default for strong container isolation:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `container_runtime` | Container runtime: `runsc` (gVisor) or `runc` (standard) | `runsc` |
+| `security_mode` | `strict` (require gVisor) or `permissive` (fallback to runc) | `strict` |
+
+**Security modes:**
+
+- **strict** (default): Fails with `RuntimeUnavailableError` if gVisor is not installed. Use this in production for guaranteed strong isolation.
+- **permissive**: Falls back to standard runc runtime with a warning if gVisor is unavailable. Useful for development on systems without gVisor.
+
+```yaml
+# Development (allow fallback to runc)
+security_mode: permissive
+container_runtime: runsc
+
+# Production (require gVisor)
+security_mode: strict
+container_runtime: runsc
+```
+
+To install gVisor, see the [gVisor installation guide](https://gvisor.dev/docs/user_guide/install/).
+
+For macOS/Windows development, use the included Lima VM configuration:
+
+```bash
+limactl start lima-gvisor.yaml
+limactl shell tako-gvisor
+```
+
 ## New Configuration Options
 
 | Option | Description | Default |
@@ -219,3 +275,5 @@ container_limits:
 | `max_retry_attempts` | Max retries for transient failures | `2` |
 | `retry_base_delay` | Base delay between retries (seconds) | `1.0` |
 | `queue_wait_timeout` | Queue wait timeout (seconds) | `1.0` |
+| `container_runtime` | Container runtime (`runsc` or `runc`) | `runsc` |
+| `security_mode` | Security mode (`strict` or `permissive`) | `strict` |
