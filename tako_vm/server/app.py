@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from tako_vm.config import TakoVMConfig, get_config
 from tako_vm.execution.health import get_circuit_breaker, startup_cleanup
-from tako_vm.execution.worker import CodeExecutor
+from tako_vm.execution.worker import CodeExecutor, check_gvisor_available
 from tako_vm.job_types import JobTypeRegistry
 from tako_vm.models import ExecutionRecord, sha256_content, sha256_json
 from tako_vm.security import sanitize_error
@@ -429,6 +429,7 @@ class HealthResponse(BaseModel):
 
     status: HealthStatus
     docker_available: bool
+    gvisor_available: bool
     circuit_breaker: CircuitBreakerStatus
     version: str
     production_mode: bool
@@ -690,6 +691,7 @@ async def health_check():
     """
     circuit_breaker = get_circuit_breaker()
     docker_available = circuit_breaker.check_docker_health()
+    gvisor_available = check_gvisor_available()
     cb_status = circuit_breaker.get_status()
 
     # Determine overall status
@@ -704,6 +706,7 @@ async def health_check():
     return HealthResponse(
         status=status,
         docker_available=docker_available,
+        gvisor_available=gvisor_available,
         circuit_breaker=CircuitBreakerStatus(**cb_status),
         version="2.0.0",
         production_mode=state.config.production_mode,
