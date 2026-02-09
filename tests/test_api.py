@@ -47,6 +47,7 @@ class TestHealthEndpoint:
         data = response.json()
         assert "status" in data
         assert "docker_available" in data
+        assert "gvisor_available" in data
         assert "version" in data
 
 
