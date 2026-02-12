@@ -109,7 +109,7 @@ header "START SERVER"
 
 # Check if Tako VM is already running on port 8000
 HEALTH_RESPONSE=$(curl -s $BASE_URL/health 2>/dev/null || echo "")
-if echo "$HEALTH_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if 'docker_healthy' in d else 1)" 2>/dev/null; then
+if echo "$HEALTH_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if 'docker_available' in d else 1)" 2>/dev/null; then
     info "Tako VM server already running at $BASE_URL, using existing server"
     # Don't set SERVER_PID so we don't kill it on exit
 else
@@ -125,7 +125,7 @@ fi # end SKIP_SETUP
 
 # Check server is Tako VM (not just any service on port 8000)
 HEALTH_RESPONSE=$(curl -s $BASE_URL/health 2>/dev/null || echo "")
-if ! echo "$HEALTH_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if 'docker_healthy' in d else 1)" 2>/dev/null; then
+if ! echo "$HEALTH_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if 'docker_available' in d else 1)" 2>/dev/null; then
     if [[ -n "$HEALTH_RESPONSE" ]]; then
         error "Port 8000 is in use by another service (not Tako VM)"
         error "Stop the other service or use a different port"

@@ -606,6 +606,7 @@ GET /health
 {
   "status": "healthy",
   "docker_available": true,
+  "gvisor_available": true,
   "circuit_breaker": {
     "state": "closed",
     "failure_count": 0,
