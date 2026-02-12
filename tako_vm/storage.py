@@ -156,7 +156,7 @@ class ExecutionStorage:
         if self._pool is not None:
             return
 
-        pool = AsyncConnectionPool(
+        pool: AsyncConnectionPool = AsyncConnectionPool(
             conninfo=self.database_url,
             min_size=self.min_pool_size,
             max_size=self.max_pool_size,
@@ -164,8 +164,13 @@ class ExecutionStorage:
             kwargs={"row_factory": dict_row},
         )
         await pool.open(wait=True, timeout=10.0)
+        try:
+            await self._run_migrations(pool)
+        except Exception:
+            await pool.close()
+            raise
+
         self._pool = pool
-        await self._run_migrations()
 
     async def close(self) -> None:
         """Close connection pool."""
@@ -178,9 +183,7 @@ class ExecutionStorage:
             raise RuntimeError("ExecutionStorage not initialized")
         return self._pool
 
-    async def _run_migrations(self) -> None:
-        pool = self._get_pool()
-
+    async def _run_migrations(self, pool) -> None:
         async with pool.connection() as conn:
             lock_acquired = False
             for _ in range(300):

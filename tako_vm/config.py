@@ -8,7 +8,7 @@ Loads configuration from YAML file with optional env var overrides.
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -193,7 +193,19 @@ class TakoVMConfig(BaseModel):
         default="postgresql://postgres:postgres@localhost:5432/tako_vm",
         description="PostgreSQL connection URL",
     )
+    database_file_str: Optional[str] = Field(default=None, alias="database_file")
     seccomp_profile_path_str: Optional[str] = Field(default=None, alias="seccomp_profile_path")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_database_file(cls, data: Any) -> Any:
+        """Reject legacy sqlite database_file with a clear migration message."""
+        if isinstance(data, dict) and data.get("database_file") and not data.get("database_url"):
+            raise ValueError(
+                "database_file is no longer supported. Configure PostgreSQL with "
+                "database_url (e.g. postgresql://user:pass@host:5432/tako_vm)."
+            )
+        return data
 
     @field_validator("database_url")
     @classmethod
@@ -209,8 +221,9 @@ class TakoVMConfig(BaseModel):
             )
             parsed = urlsplit(v)
 
-        if not parsed.hostname:
-            raise ValueError("database_url must include a hostname")
+        query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        if not parsed.hostname and not query_params.get("host"):
+            raise ValueError("database_url must include a hostname or host query parameter")
         if not parsed.path or parsed.path == "/":
             raise ValueError("database_url must include a database name")
         return v
@@ -415,6 +428,8 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
         config_dict["data_dir"] = os.environ["TAKO_VM_DATA_DIR"]
     if "TAKO_VM_DATABASE_URL" in os.environ:
         config_dict["database_url"] = os.environ["TAKO_VM_DATABASE_URL"]
+    elif "TAKO_VM_DATABASE_FILE" in os.environ:
+        config_dict["database_file"] = os.environ["TAKO_VM_DATABASE_FILE"]
     if "TAKO_VM_SECURITY_MODE" in os.environ:
         config_dict["security_mode"] = os.environ["TAKO_VM_SECURITY_MODE"].lower()
     if "TAKO_VM_CONTAINER_RUNTIME" in os.environ:

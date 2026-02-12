@@ -199,6 +199,11 @@ class TestTakoVMConfig:
         config = TakoVMConfig(database_url="postgresql+psycopg://user:pass@localhost:5432/testdb")
         assert config.database_url == "postgresql://user:pass@localhost:5432/testdb"
 
+    def test_tako_vm_config_accepts_unix_socket_dsn(self):
+        """database_url accepts libpq unix socket DSNs."""
+        config = TakoVMConfig(database_url="postgresql:///testdb?host=/var/run/postgresql")
+        assert config.database_url == "postgresql:///testdb?host=/var/run/postgresql"
+
     def test_tako_vm_config_container_runtime_validation(self):
         """TakoVMConfig validates container runtime."""
         # Valid runtimes
@@ -292,6 +297,15 @@ security_mode: permissive
         config = load_config()
         assert config.security_mode == "permissive"
 
+    def test_load_config_legacy_database_file_env_errors(self, monkeypatch):
+        """Legacy database file env var fails with migration guidance."""
+        monkeypatch.delenv("TAKO_VM_DATABASE_URL", raising=False)
+        monkeypatch.setenv("TAKO_VM_DATABASE_FILE", "/tmp/executions.db")
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config()
+        assert "database_file is no longer supported" in str(exc_info.value)
+
     def test_load_config_env_container_runtime(self, monkeypatch):
         """TAKO_VM_CONTAINER_RUNTIME env var is normalized."""
         monkeypatch.setenv("TAKO_VM_CONTAINER_RUNTIME", "RUNC")
@@ -314,6 +328,24 @@ max_workers: -1  # Invalid: must be >= 1
         try:
             with pytest.raises(ConfigurationError):
                 load_config(config_path)
+        finally:
+            config_path.unlink()
+
+    def test_load_config_legacy_database_file_key_errors(self):
+        """Legacy database_file key in YAML fails with migration guidance."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(
+                """
+database_file: /tmp/executions.db
+"""
+            )
+            f.flush()
+            config_path = Path(f.name)
+
+        try:
+            with pytest.raises(ConfigurationError) as exc_info:
+                load_config(config_path)
+            assert "database_file is no longer supported" in str(exc_info.value)
         finally:
             config_path.unlink()
 

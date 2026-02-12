@@ -793,3 +793,21 @@ class TestCLIDevHelpers:
 
         captured = capsys.readouterr()
         assert "not created" in captured.out
+
+    def test_dev_status_reports_docker_unavailable_when_daemon_down(self, capsys):
+        """dev_status surfaces daemon outage as docker unavailable."""
+        from tako_vm.cli import dev_status
+
+        args = argparse.Namespace()
+        with patch(
+            "tako_vm.cli.subprocess.run",
+            side_effect=subprocess.CalledProcessError(
+                1, ["docker", "info"], stderr="Cannot connect to the Docker daemon"
+            ),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                dev_status(args)
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert "Status: docker unavailable" in captured.out

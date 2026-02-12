@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import psycopg
 import pytest
 
+import tako_vm.storage as storage_module
 from tako_vm.models import ExecutionRecord, sha256_content, sha256_json
 from tako_vm.storage import ExecutionStorage
 
@@ -111,3 +112,21 @@ async def test_concurrent_storage_init_is_safe(temp_data_dir):
         assert failures == []
     finally:
         await asyncio.gather(*(storage.close() for storage in storages), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_init_clears_pool_when_migrations_fail(temp_data_dir):
+    storage = ExecutionStorage(os.environ["TAKO_VM_DATABASE_URL"])
+    original_migrations = list(storage_module.MIGRATIONS)
+    try:
+        storage_module.MIGRATIONS = [("0000_broken", "SELECT FROM")]
+
+        with pytest.raises(Exception):
+            await storage.init()
+
+        storage_module.MIGRATIONS = original_migrations
+        await storage.init()
+        assert await storage.list_records(limit=1, offset=0) == []
+    finally:
+        storage_module.MIGRATIONS = original_migrations
+        await storage.close()

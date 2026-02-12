@@ -199,6 +199,7 @@ def temp_data_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         original_data_dir = os.environ.get("TAKO_VM_DATA_DIR")
         original_db_url = os.environ.get("TAKO_VM_DATABASE_URL")
+        schema_created = False
 
         raw_db_url = os.environ.get(
             "TAKO_VM_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/tako_vm_test"
@@ -226,9 +227,13 @@ def temp_data_dir():
                 (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
             )
 
-        with psycopg.connect(base_db_url, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        try:
+            with psycopg.connect(base_db_url, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+                    schema_created = True
+        except psycopg.Error as exc:
+            pytest.skip(f"PostgreSQL test database unavailable: {exc}")
 
         test_db_url = with_schema(base_db_url, schema)
 
@@ -249,9 +254,10 @@ def temp_data_dir():
         else:
             os.environ.pop("TAKO_VM_DATABASE_URL", None)
 
-        with psycopg.connect(base_db_url, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        if schema_created:
+            with psycopg.connect(base_db_url, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
 @pytest.fixture

@@ -253,14 +253,16 @@ def _ensure_managed_postgres() -> None:
 
 def _managed_postgres_state() -> str:
     try:
-        inspect_proc = subprocess.run(
-            ["docker", "container", "inspect", MANAGED_POSTGRES_CONTAINER],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        subprocess.run(["docker", "info"], check=True, capture_output=True, text=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "docker_unavailable"
+
+    inspect_proc = subprocess.run(
+        ["docker", "container", "inspect", MANAGED_POSTGRES_CONTAINER],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
     if inspect_proc.returncode != 0:
         return "missing"
