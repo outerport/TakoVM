@@ -4,6 +4,7 @@ PostgreSQL storage for Tako VM execution records.
 Provides async CRUD operations for ExecutionRecords and JobVersions.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -24,6 +25,8 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+MIGRATION_LOCK_ID = 94857231
 
 
 MIGRATIONS: list[tuple[str, str]] = [
@@ -179,30 +182,49 @@ class ExecutionStorage:
         pool = self._get_pool()
 
         async with pool.connection() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    version TEXT PRIMARY KEY,
-                    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            lock_acquired = False
+            for _ in range(300):
+                cursor = await conn.execute(
+                    "SELECT pg_try_advisory_lock(%s) AS locked", (MIGRATION_LOCK_ID,)
                 )
-                """
-            )
+                row = await cursor.fetchone()
+                if row and row.get("locked"):
+                    lock_acquired = True
+                    break
+                await asyncio.sleep(0.1)
 
-        for version, sql in MIGRATIONS:
-            async with pool.connection() as conn:
-                async with conn.transaction():
-                    cursor = await conn.execute(
-                        "SELECT 1 FROM schema_migrations WHERE version = %s", (version,)
-                    )
-                    exists = await cursor.fetchone()
-                    if exists:
-                        continue
+            if not lock_acquired:
+                raise TimeoutError("Timed out acquiring migration advisory lock")
 
-                    await conn.execute(sql)
-                    await conn.execute(
-                        "INSERT INTO schema_migrations (version) VALUES (%s)", (version,)
+            try:
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version TEXT PRIMARY KEY,
+                        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
-                    logger.info("Applied database migration %s", version)
+                    """
+                )
+
+                for version, sql in MIGRATIONS:
+                    async with conn.transaction():
+                        cursor = await conn.execute(
+                            """
+                            INSERT INTO schema_migrations (version)
+                            VALUES (%s)
+                            ON CONFLICT (version) DO NOTHING
+                            RETURNING version
+                            """,
+                            (version,),
+                        )
+                        inserted = await cursor.fetchone()
+                        if not inserted:
+                            continue
+
+                        await conn.execute(sql)
+                        logger.info("Applied database migration %s", version)
+            finally:
+                await conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_ID,))
 
     async def save_record(self, record: ExecutionRecord) -> None:
         """Insert or update execution record."""

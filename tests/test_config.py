@@ -194,6 +194,11 @@ class TestTakoVMConfig:
             TakoVMConfig(default_timeout=100, max_timeout=50)
         assert "default_timeout must be <= max_timeout" in str(exc_info.value)
 
+    def test_tako_vm_config_normalizes_psycopg_url_scheme(self):
+        """database_url normalizes postgresql+psycopg scheme for psycopg pool."""
+        config = TakoVMConfig(database_url="postgresql+psycopg://user:pass@localhost:5432/testdb")
+        assert config.database_url == "postgresql://user:pass@localhost:5432/testdb"
+
     def test_tako_vm_config_container_runtime_validation(self):
         """TakoVMConfig validates container runtime."""
         # Valid runtimes

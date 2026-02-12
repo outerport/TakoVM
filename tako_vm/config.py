@@ -8,7 +8,7 @@ Loads configuration from YAML file with optional env var overrides.
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -198,10 +198,17 @@ class TakoVMConfig(BaseModel):
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:
-        """Validate PostgreSQL database URL format."""
-        parsed = urlparse(v)
+        """Validate and normalize PostgreSQL database URL format."""
+        parsed = urlsplit(v)
         if parsed.scheme not in {"postgresql", "postgresql+psycopg"}:
             raise ValueError("database_url must use postgresql:// or postgresql+psycopg://")
+
+        if parsed.scheme == "postgresql+psycopg":
+            v = urlunsplit(
+                ("postgresql", parsed.netloc, parsed.path, parsed.query, parsed.fragment)
+            )
+            parsed = urlsplit(v)
+
         if not parsed.hostname:
             raise ValueError("database_url must include a hostname")
         if not parsed.path or parsed.path == "/":

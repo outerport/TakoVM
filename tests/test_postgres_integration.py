@@ -10,6 +10,11 @@ import pytest
 from tako_vm.models import ExecutionRecord, sha256_content, sha256_json
 from tako_vm.storage import ExecutionStorage
 
+pytestmark = pytest.mark.skipif(
+    "TAKO_VM_DATABASE_URL" not in os.environ,
+    reason="Set TAKO_VM_DATABASE_URL to run PostgreSQL integration tests",
+)
+
 
 def _make_record(execution_id: str, idempotency_key: str | None = None) -> ExecutionRecord:
     return ExecutionRecord(
@@ -93,3 +98,16 @@ async def test_concurrent_idempotency_conflict_allows_single_write(temp_data_dir
             row = cur.fetchone()
             count = row[0] if row else 0
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_storage_init_is_safe(temp_data_dir):
+    storages = [ExecutionStorage(os.environ["TAKO_VM_DATABASE_URL"]) for _ in range(4)]
+    try:
+        results = await asyncio.gather(
+            *(storage.init() for storage in storages), return_exceptions=True
+        )
+        failures = [r for r in results if isinstance(r, Exception)]
+        assert failures == []
+    finally:
+        await asyncio.gather(*(storage.close() for storage in storages), return_exceptions=True)

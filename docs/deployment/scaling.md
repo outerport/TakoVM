@@ -161,11 +161,12 @@ Run multiple Tako VM instances behind a load balancer with shared state.
 # tako_vm/storage.py
 # Use psycopg async pool
 
-import asyncpg
+from psycopg_pool import AsyncConnectionPool
 
 class PostgresStorage:
     async def connect(self, dsn: str):
-        self.pool = await asyncpg.create_pool(dsn)
+        self.pool = AsyncConnectionPool(conninfo=dsn, open=False)
+        await self.pool.open()
 ```
 
 **Phase 2: Redis Job Queue**

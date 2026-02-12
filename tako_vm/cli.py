@@ -3,6 +3,9 @@ Tako VM Command Line Interface.
 
 Usage:
     tako-vm server          Start the Tako VM server
+    tako-vm dev up          Start local development services
+    tako-vm dev status      Show local development services status
+    tako-vm dev down        Stop local development services
     tako-vm status          Check server health
     tako-vm validate        Validate configuration file
     tako-vm config          Show current configuration
@@ -20,9 +23,17 @@ except ImportError:
     pass
 
 import argparse
+import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+
+DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/tako_vm"
+MANAGED_POSTGRES_URL = "postgresql://postgres:postgres@localhost:55432/tako_vm"
+MANAGED_POSTGRES_CONTAINER = "tako-vm-postgres"
+MANAGED_POSTGRES_VOLUME = "tako-vm-postgres-data"
 
 
 def main():
@@ -50,6 +61,29 @@ def main():
     server_parser.add_argument(
         "--workers", type=int, help="Number of worker processes (overrides config)"
     )
+    server_parser.set_defaults(auto_start_postgres=True)
+    server_parser.add_argument(
+        "--no-auto-start-postgres",
+        action="store_false",
+        dest="auto_start_postgres",
+        help="Disable auto-starting local PostgreSQL when using defaults",
+    )
+
+    # Dev command
+    dev_parser = subparsers.add_parser("dev", help="Development helpers")
+    dev_subparsers = dev_parser.add_subparsers(dest="dev_command", help="Dev commands")
+    dev_up_parser = dev_subparsers.add_parser("up", help="Start local PostgreSQL for development")
+    dev_up_parser.add_argument(
+        "--with-server",
+        action="store_true",
+        help="Start API server after PostgreSQL is ready",
+    )
+    dev_up_parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    dev_up_parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+    dev_up_parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
+    dev_up_parser.set_defaults(auto_start_postgres=True)
+    dev_subparsers.add_parser("status", help="Show local PostgreSQL status")
+    dev_subparsers.add_parser("down", help="Stop local PostgreSQL container")
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Check server health")
@@ -87,6 +121,16 @@ def main():
 
     if args.command == "server":
         run_server(args)
+    elif args.command == "dev":
+        if args.dev_command == "up":
+            dev_up(args)
+        elif args.dev_command == "down":
+            dev_down(args)
+        elif args.dev_command == "status":
+            dev_status(args)
+        else:
+            dev_parser.print_help()
+            sys.exit(1)
     elif args.command == "status":
         check_status(args)
     elif args.command == "validate":
@@ -115,6 +159,9 @@ def run_server(args):
     # Validate config before starting
     try:
         config = get_config()
+        auto_start_postgres = bool(vars(args).get("auto_start_postgres", False))
+        if auto_start_postgres:
+            _auto_start_local_postgres_if_needed(config)
         print("Configuration loaded successfully")
         if config.production_mode:
             print("Running in PRODUCTION mode")
@@ -134,6 +181,196 @@ def run_server(args):
         port=port,
         reload=args.reload,
     )
+
+
+def _can_connect_database(database_url: str, timeout: int = 2) -> bool:
+    try:
+        import psycopg
+
+        with psycopg.connect(database_url, connect_timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _ensure_managed_postgres() -> None:
+    subprocess.run(["docker", "info"], check=True, capture_output=True, text=True)
+
+    inspect_proc = subprocess.run(
+        ["docker", "container", "inspect", MANAGED_POSTGRES_CONTAINER],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    if inspect_proc.returncode == 0:
+        running_proc = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", MANAGED_POSTGRES_CONTAINER],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if running_proc.stdout.strip().lower() != "true":
+            subprocess.run(
+                ["docker", "start", MANAGED_POSTGRES_CONTAINER],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+    else:
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                MANAGED_POSTGRES_CONTAINER,
+                "-e",
+                "POSTGRES_USER=postgres",
+                "-e",
+                "POSTGRES_PASSWORD=postgres",
+                "-e",
+                "POSTGRES_DB=tako_vm",
+                "-p",
+                "55432:5432",
+                "-v",
+                f"{MANAGED_POSTGRES_VOLUME}:/var/lib/postgresql/data",
+                "postgres:16-alpine",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if _can_connect_database(MANAGED_POSTGRES_URL, timeout=2):
+            return
+        time.sleep(1)
+
+    raise RuntimeError("Timed out waiting for local PostgreSQL to become ready")
+
+
+def _managed_postgres_state() -> str:
+    try:
+        inspect_proc = subprocess.run(
+            ["docker", "container", "inspect", MANAGED_POSTGRES_CONTAINER],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "docker_unavailable"
+
+    if inspect_proc.returncode != 0:
+        return "missing"
+
+    running_proc = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Running}}", MANAGED_POSTGRES_CONTAINER],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return "running" if running_proc.stdout.strip().lower() == "true" else "stopped"
+
+
+def _auto_start_local_postgres_if_needed(config) -> None:
+    disabled = os.environ.get("TAKO_VM_AUTO_START_LOCAL_POSTGRES", "1").lower() in {
+        "0",
+        "false",
+        "no",
+    }
+    if disabled:
+        return
+    if config.production_mode:
+        return
+    if config.database_url != DEFAULT_DATABASE_URL:
+        return
+    if _can_connect_database(config.database_url):
+        return
+
+    try:
+        print("Database unavailable; starting local PostgreSQL for development...")
+        _ensure_managed_postgres()
+    except Exception as e:
+        print(
+            f"Warning: failed to auto-start local PostgreSQL ({e}). "
+            "Start a database manually or run `tako-vm dev up`.",
+            file=sys.stderr,
+        )
+        return
+
+    os.environ["TAKO_VM_DATABASE_URL"] = MANAGED_POSTGRES_URL
+    config.database_url = MANAGED_POSTGRES_URL
+    print(f"Using local PostgreSQL at {MANAGED_POSTGRES_URL}")
+
+
+def dev_up(args):
+    """Start local development services."""
+    try:
+        _ensure_managed_postgres()
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.strip() if e.stderr else str(e)
+        print(f"Error: failed to start local PostgreSQL: {stderr}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: failed to start local PostgreSQL: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    os.environ["TAKO_VM_DATABASE_URL"] = MANAGED_POSTGRES_URL
+    print("Local PostgreSQL is ready")
+    print(f"Database URL: {MANAGED_POSTGRES_URL}")
+
+    if args.with_server:
+        run_server(args)
+
+
+def dev_down(args):
+    """Stop local development services."""
+    del args
+
+    state = _managed_postgres_state()
+    if state == "docker_unavailable":
+        print("Error: Docker is not available", file=sys.stderr)
+        sys.exit(1)
+    if state == "missing":
+        print("Local PostgreSQL container is not created")
+        return
+    if state == "stopped":
+        print("Local PostgreSQL is already stopped")
+        return
+
+    subprocess.run(
+        ["docker", "stop", MANAGED_POSTGRES_CONTAINER],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    print("Local PostgreSQL stopped")
+
+
+def dev_status(args):
+    """Show local development service status."""
+    del args
+
+    state = _managed_postgres_state()
+    print("Development Services")
+    print("=" * 20)
+    print(f"Container: {MANAGED_POSTGRES_CONTAINER}")
+    print(f"Database URL: {MANAGED_POSTGRES_URL}")
+
+    if state == "docker_unavailable":
+        print("Status: docker unavailable")
+        sys.exit(1)
+    if state == "missing":
+        print("Status: not created")
+        return
+    if state == "stopped":
+        print("Status: stopped")
+        return
+
+    reachable = _can_connect_database(MANAGED_POSTGRES_URL)
+    print(f"Status: running ({'reachable' if reachable else 'not reachable'})")
 
 
 def check_status(args):
@@ -235,6 +472,7 @@ def show_config(args):
                 "_resolved_seccomp_profile_path",
             }
         )
+        data["database_url"] = _mask_database_url(config.database_url)
         print(json.dumps(data, indent=2, default=str))
     else:
         print("Tako VM Configuration")

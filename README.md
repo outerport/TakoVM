@@ -119,6 +119,10 @@ The first run builds the executor Docker image automatically (~30 seconds one-ti
 For production workloads with job queuing, retries, and execution history:
 
 ```bash
+# Zero-setup local development (starts managed PostgreSQL if needed)
+tako-vm dev up --with-server
+
+# Or start server directly (auto-starts local PostgreSQL when using defaults)
 tako-vm server
 ```
 
@@ -159,6 +163,10 @@ print(result.result)  # 30
 tako-vm --help                    # Show all commands
 tako-vm server                    # Start the API server
 tako-vm server --port 9000        # Custom port
+tako-vm dev up                    # Start local PostgreSQL for development
+tako-vm dev up --with-server      # Start local PostgreSQL + API server
+tako-vm dev status                # Check local PostgreSQL helper status
+tako-vm dev down                  # Stop local PostgreSQL helper container
 tako-vm --config my.yaml server   # Use specific config file
 
 tako-vm config                    # Show current configuration
