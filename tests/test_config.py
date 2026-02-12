@@ -179,13 +179,13 @@ class TestTakoVMConfig:
         assert config.security_mode == "strict"
 
     def test_tako_vm_config_path_resolution(self):
-        """TakoVMConfig resolves paths correctly."""
+        """TakoVMConfig resolves data_dir while keeping database URL."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = TakoVMConfig(data_dir=tmpdir)
             config.resolve_paths()
 
             assert config.data_dir == Path(tmpdir)
-            assert config.database_file == Path(tmpdir) / "executions.db"
+            assert config.database_url.startswith("postgresql://")
 
     def test_tako_vm_config_timeout_validation(self):
         """TakoVMConfig validates timeout relationships."""

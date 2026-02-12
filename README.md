@@ -26,7 +26,7 @@ Sandbox solutions like [e2b](https://e2b.dev) and [microsandbox](https://github.
 | You build | With sandbox-only | With Tako VM |
 |-----------|-------------------|--------------|
 | Job queue | Redis + Celery/Bull | ✅ Built-in |
-| Execution history | Postgres + schema | ✅ SQLite included |
+| Execution history | Postgres + schema | ✅ PostgreSQL included |
 | Retry logic | Custom code | ✅ Automatic |
 | Idempotency | Deduplication logic | ✅ `idempotency_key` |
 | Replay/debugging | Custom tooling | ✅ Rerun/fork API |
@@ -200,7 +200,7 @@ export TAKO_VM_CONFIG=/path/to/config.yaml
 
 # Override paths
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
-export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/db.sqlite
+export TAKO_VM_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tako_vm
 ```
 
 ### Container Limits
@@ -539,7 +539,7 @@ tako-vm/
 │   ├── cli.py               # CLI entry point
 │   ├── config.py            # Pydantic configuration
 │   ├── models.py            # Data models
-│   ├── storage.py           # SQLite persistence
+│   ├── storage.py           # PostgreSQL persistence
 │   └── job_types.py         # Job type definitions
 ├── docker/
 │   ├── Dockerfile.executor  # Base executor image (with uv)

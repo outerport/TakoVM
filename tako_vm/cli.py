@@ -22,6 +22,7 @@ except ImportError:
 import argparse
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 
 def main():
@@ -213,6 +214,17 @@ def show_config(args):
 
     config_file = get_config_path()
 
+    def _mask_database_url(url: str) -> str:
+        parts = urlsplit(url)
+        if "@" not in parts.netloc:
+            return url
+        creds, host = parts.netloc.rsplit("@", 1)
+        username = creds.split(":", 1)[0] if creds else ""
+        masked_creds = f"{username}:***" if username else "***"
+        return urlunsplit(
+            (parts.scheme, f"{masked_creds}@{host}", parts.path, parts.query, parts.fragment)
+        )
+
     if args.json:
         import json
 
@@ -220,7 +232,6 @@ def show_config(args):
         data = config.model_dump(
             exclude={
                 "_resolved_data_dir",
-                "_resolved_database_file",
                 "_resolved_seccomp_profile_path",
             }
         )
@@ -240,7 +251,7 @@ def show_config(args):
 
         print("[Paths]")
         print(f"  data_dir: {config.data_dir}")
-        print(f"  database_file: {config.database_file}")
+        print(f"  database_url: {_mask_database_url(config.database_url)}")
         print()
 
         print("[Queue & Workers]")

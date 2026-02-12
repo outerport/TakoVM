@@ -8,6 +8,7 @@ Loads configuration from YAML file with optional env var overrides.
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -188,8 +189,24 @@ class TakoVMConfig(BaseModel):
             raise ValueError(f"log_level must be one of: {', '.join(sorted(valid_levels))}")
         return v.upper()
 
-    database_file_str: Optional[str] = Field(default=None, alias="database_file")
+    database_url: str = Field(
+        default="postgresql://postgres:postgres@localhost:5432/tako_vm",
+        description="PostgreSQL connection URL",
+    )
     seccomp_profile_path_str: Optional[str] = Field(default=None, alias="seccomp_profile_path")
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        """Validate PostgreSQL database URL format."""
+        parsed = urlparse(v)
+        if parsed.scheme not in {"postgresql", "postgresql+psycopg"}:
+            raise ValueError("database_url must use postgresql:// or postgresql+psycopg://")
+        if not parsed.hostname:
+            raise ValueError("database_url must include a hostname")
+        if not parsed.path or parsed.path == "/":
+            raise ValueError("database_url must include a database name")
+        return v
 
     # Queue & Workers
     max_workers: int = Field(default=4, ge=1, le=64)
@@ -272,7 +289,6 @@ class TakoVMConfig(BaseModel):
 
     # Internal: resolved paths (set after validation)
     _resolved_data_dir: Optional[Path] = None
-    _resolved_database_file: Optional[Path] = None
     _resolved_seccomp_profile_path: Optional[Path] = None
 
     model_config = {"extra": "forbid", "populate_by_name": True}  # Reject unknown keys, allow alias
@@ -292,12 +308,6 @@ class TakoVMConfig(BaseModel):
         self._resolved_data_dir = Path(self.data_dir_str)
         self._resolved_data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Database file
-        if self.database_file_str:
-            self._resolved_database_file = Path(self.database_file_str)
-        else:
-            self._resolved_database_file = self._resolved_data_dir / "executions.db"
-
         # Seccomp profile
         if self.seccomp_profile_path_str:
             self._resolved_seccomp_profile_path = Path(self.seccomp_profile_path_str)
@@ -315,13 +325,6 @@ class TakoVMConfig(BaseModel):
         return self._resolved_data_dir  # type: ignore
 
     @property
-    def database_file(self) -> Path:
-        """Get database file path (backward compatible)."""
-        if self._resolved_database_file is None:
-            self.resolve_paths()
-        return self._resolved_database_file  # type: ignore
-
-    @property
     def seccomp_profile_path(self) -> Path:
         """Get seccomp profile path (backward compatible)."""
         if self._resolved_seccomp_profile_path is None:
@@ -332,10 +335,6 @@ class TakoVMConfig(BaseModel):
     @property
     def data_dir_path(self) -> Path:
         return self.data_dir
-
-    @property
-    def database_file_path(self) -> Path:
-        return self.database_file
 
     @property
     def seccomp_profile_path_resolved(self) -> Path:
@@ -407,8 +406,8 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
     # Apply env var overrides
     if "TAKO_VM_DATA_DIR" in os.environ:
         config_dict["data_dir"] = os.environ["TAKO_VM_DATA_DIR"]
-    if "TAKO_VM_DATABASE_FILE" in os.environ:
-        config_dict["database_file"] = os.environ["TAKO_VM_DATABASE_FILE"]
+    if "TAKO_VM_DATABASE_URL" in os.environ:
+        config_dict["database_url"] = os.environ["TAKO_VM_DATABASE_URL"]
     if "TAKO_VM_SECURITY_MODE" in os.environ:
         config_dict["security_mode"] = os.environ["TAKO_VM_SECURITY_MODE"].lower()
     if "TAKO_VM_CONTAINER_RUNTIME" in os.environ:

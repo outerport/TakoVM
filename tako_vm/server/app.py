@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from psycopg import IntegrityError
 from pydantic import BaseModel, Field, field_validator
 
 from tako_vm.config import TakoVMConfig, get_config
@@ -131,11 +132,11 @@ async def _periodic_cleanup(storage: ExecutionStorage, record_ttl_days: int, dlq
         try:
             await asyncio.sleep(cleanup_interval)
             # Clean up old execution records
-            records_deleted = storage.cleanup_old_records(record_ttl_days)
+            records_deleted = await storage.cleanup_old_records(record_ttl_days)
             if records_deleted > 0:
                 logger.info(f"Cleanup: deleted {records_deleted} old execution records")
             # Clean up old DLQ entries
-            dlq_deleted = storage.cleanup_old_dlq_entries(dlq_ttl_days)
+            dlq_deleted = await storage.cleanup_old_dlq_entries(dlq_ttl_days)
             if dlq_deleted > 0:
                 logger.info(f"Cleanup: deleted {dlq_deleted} old DLQ entries")
         except asyncio.CancelledError:
@@ -161,8 +162,8 @@ async def lifespan(app: FastAPI):
     _configure_log_level(state.config.log_level)
     state.registry = JobTypeRegistry()
     state.executor = CodeExecutor(registry=state.registry, config=state.config)
-    state.storage = ExecutionStorage(state.config.database_file)
-    state.storage.init()
+    state.storage = ExecutionStorage(state.config.database_url)
+    await state.storage.init()
     state.worker_pool = WorkerPool(
         executor=state.executor,
         storage=state.storage,
@@ -189,7 +190,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     await state.worker_pool.stop()
-    state.storage.close()
+    await state.storage.close()
 
 
 app = FastAPI(
@@ -813,7 +814,7 @@ async def _submit_async_job(request: ExecuteRequest, http_request: Request) -> A
     """
     # Check idempotency key BEFORE queueing
     if request.idempotency_key:
-        existing = state.storage.get_by_idempotency_key(request.idempotency_key)
+        existing = await state.storage.get_by_idempotency_key(request.idempotency_key)
         if existing:
             # Verify fingerprint matches (detect key reuse with different payload)
             expected_fingerprint = compute_idempotency_fingerprint(
@@ -860,9 +861,24 @@ async def _submit_async_job(request: ExecuteRequest, http_request: Request) -> A
     if request.requirements is not None:
         job_data["requirements"] = request.requirements
 
-    job_id = await state.worker_pool.submit(
-        job_data=job_data, client_ip=http_request.client.host if http_request.client else None
-    )
+    try:
+        job_id = await state.worker_pool.submit(
+            job_data=job_data, client_ip=http_request.client.host if http_request.client else None
+        )
+    except IntegrityError as exc:
+        if request.idempotency_key:
+            existing = await state.storage.get_by_idempotency_key(request.idempotency_key)
+            if existing:
+                if (
+                    existing.idempotency_fingerprint
+                    and idempotency_fingerprint
+                    and existing.idempotency_fingerprint != idempotency_fingerprint
+                ):
+                    raise HTTPException(
+                        status_code=409, detail="Idempotency key reused with different payload"
+                    ) from exc
+                return AsyncExecuteResponse(job_id=existing.execution_id, status=existing.status)
+        raise
 
     logger.info(f"Job {job_id} queued (correlation_id={correlation_id})")
 
@@ -914,7 +930,7 @@ async def get_job_result(
         if wait:
             record = await state.worker_pool.wait_for_result(job_id, timeout=timeout)
         else:
-            record = state.storage.get_record(job_id)
+            record = await state.storage.get_record(job_id)
             if not record:
                 # Check if still in queue
                 status = await state.worker_pool.get_job_status(job_id)
@@ -1019,7 +1035,7 @@ async def rerun_job(job_id: str, request: RerunRequest, http_request: Request):
     Returns:
         New job ID and status
     """
-    parent = state.storage.get_record(job_id)
+    parent = await state.storage.get_record(job_id)
     if not parent:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1075,7 +1091,7 @@ async def fork_job(job_id: str, request: ForkRequest, http_request: Request):
     Returns:
         New job ID and status
     """
-    parent = state.storage.get_record(job_id)
+    parent = await state.storage.get_record(job_id)
     if not parent:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1122,7 +1138,7 @@ async def download_artifact(job_id: str, artifact_name: str):
     Returns:
         Artifact file with appropriate Content-Type and ETag header
     """
-    record = state.storage.get_record(job_id)
+    record = await state.storage.get_record(job_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1162,7 +1178,7 @@ async def artifact_metadata(job_id: str, artifact_name: str):
     Returns:
         Response with Content-Length, Content-Type, and ETag headers
     """
-    record = state.storage.get_record(job_id)
+    record = await state.storage.get_record(job_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1201,7 +1217,7 @@ async def list_executions(
     Use ?view=full to include artifacts, resource usage, content hashes, and lineage info.
     """
     actual_limit = min(limit, 1000)
-    records = state.storage.list_records(
+    records = await state.storage.list_records(
         status=status,
         job_type=job_type,
         limit=actual_limit + 1,  # Fetch one extra to check has_more
@@ -1243,7 +1259,7 @@ async def get_execution(
     Returns:
         Execution record (slim by default, full with ?view=full)
     """
-    record = state.storage.get_record(execution_id)
+    record = await state.storage.get_record(execution_id)
     if not record:
         raise HTTPException(status_code=404, detail="Execution not found")
 
@@ -1335,7 +1351,7 @@ async def build_job_type(name: str, version_tag: Optional[str] = None):
 
         # Register version
         version_manager = VersionManager(state.storage)
-        version = version_manager.register_version(
+        version = await version_manager.register_version(
             job_type=jt, image_ref=jt.image_name, version_tag=version_tag, built_by="manual"
         )
 
@@ -1370,7 +1386,7 @@ async def get_dlq_stats():
     Returns:
         DLQ stats including total count and breakdown by error type
     """
-    stats = state.storage.get_dlq_stats()
+    stats = await state.storage.get_dlq_stats()
     return DLQStatsResponse(**stats)
 
 
@@ -1390,7 +1406,7 @@ async def list_dlq_entries(
     Returns paginated list of failed jobs for debugging and reprocessing.
     """
     actual_limit = min(limit, 1000)
-    entries = state.storage.list_dlq_entries(
+    entries = await state.storage.list_dlq_entries(
         error_type=error_type,
         limit=actual_limit + 1,  # Fetch one extra to check has_more
         offset=offset,
@@ -1420,7 +1436,7 @@ async def remove_dlq_entry(entry_id: int):
     Returns:
         Removal status
     """
-    if state.storage.remove_from_dlq(entry_id):
+    if await state.storage.remove_from_dlq(entry_id):
         return DLQRemoveResponse(status="removed", entry_id=entry_id)
     raise HTTPException(status_code=404, detail="DLQ entry not found")
 

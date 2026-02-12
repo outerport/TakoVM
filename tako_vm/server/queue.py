@@ -177,14 +177,6 @@ class WorkerPool:
             future=loop.create_future(),
         )
 
-        try:
-            self._queue.put_nowait(job)
-        except asyncio.QueueFull as exc:
-            raise RuntimeError("Job queue is full, try again later") from exc
-
-        async with self._jobs_lock:
-            self._active_jobs[job_id] = job
-
         # Create preliminary "queued" record for idempotency tracking
         # This ensures concurrent requests with same idempotency_key see the record
         job_type_name = job_data.get("job_type") or "default"
@@ -203,7 +195,23 @@ class WorkerPool:
             parent_execution_id=job_data.get("parent_execution_id"),
             relationship=job_data.get("relationship"),
         )
-        self.storage.save_record(queued_record)
+        if self._queue.full():
+            raise RuntimeError("Job queue is full, try again later")
+
+        await self.storage.save_record(queued_record)
+
+        try:
+            self._queue.put_nowait(job)
+        except asyncio.QueueFull as exc:
+            queued_record.status = "failed"
+            queued_record.error = ExecutionError(
+                type="service_unavailable", message="Job queue is full, try again later"
+            )
+            await self.storage.save_record(queued_record)
+            raise RuntimeError("Job queue is full, try again later") from exc
+
+        async with self._jobs_lock:
+            self._active_jobs[job_id] = job
 
         logger.info(f"Job {job_id} queued (queue size: {self._queue.qsize()})")
 
@@ -233,7 +241,7 @@ class WorkerPool:
 
         if not job:
             # Check if already completed in storage
-            record = self.storage.get_record(job_id)
+            record = await self.storage.get_record(job_id)
             if record:
                 return record
             raise KeyError(f"Job {job_id} not found")
@@ -282,7 +290,7 @@ class WorkerPool:
                 }
 
         # Check storage for completed jobs (outside lock - storage has its own lock)
-        record = self.storage.get_record(job_id)
+        record = await self.storage.get_record(job_id)
         if record:
             return {
                 "job_id": job_id,
@@ -409,7 +417,7 @@ class WorkerPool:
                     record = await self._execute_job(job)
 
                     # Save to storage
-                    self.storage.save_record(record)
+                    await self.storage.save_record(record)
 
                     # Set result (with race condition protection)
                     if job.future:
@@ -437,7 +445,7 @@ class WorkerPool:
                         parent_execution_id=job.job_data.get("parent_execution_id"),
                         relationship=job.job_data.get("relationship"),
                     )
-                    self.storage.save_record(record)
+                    await self.storage.save_record(record)
 
                     if job.future:
                         try:
@@ -474,7 +482,7 @@ class WorkerPool:
                         parent_execution_id=job.job_data.get("parent_execution_id"),
                         relationship=job.job_data.get("relationship"),
                     )
-                    self.storage.save_record(record)
+                    await self.storage.save_record(record)
 
                     # Add to dead letter queue for internal errors (P3 fix)
                     try:
@@ -487,7 +495,7 @@ class WorkerPool:
                             client_ip=job.client_ip,
                             correlation_id=get_correlation_id(),
                         )
-                        self.storage.add_to_dlq(dlq_entry)
+                        await self.storage.add_to_dlq(dlq_entry)
                         logger.info(f"Job {job.job_id} added to dead letter queue")
                     except Exception as dlq_err:
                         logger.warning(f"Failed to add job {job.job_id} to DLQ: {dlq_err}")
@@ -526,7 +534,7 @@ class WorkerPool:
                                 type="internal_error", message=sanitize_error(str(e))
                             ),
                         )
-                        self.storage.save_record(error_record)
+                        await self.storage.save_record(error_record)
                         job.future.set_result(error_record)
                     except Exception as recovery_err:
                         logger.error(

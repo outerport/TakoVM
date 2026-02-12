@@ -31,12 +31,33 @@ services:
       - PYTHONUNBUFFERED=1
       # Use shared workspace path for job files
       - TAKO_VM_WORKSPACE=/tmp/tako-vm-jobs
+      - TAKO_VM_DATABASE_URL=postgresql://postgres:postgres@postgres:5432/tako_vm
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: tako-vm-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=tako_vm
+    ports:
+      - "5432:5432"
+    volumes:
+      - tako-vm-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tako_vm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Build executor image (run once, then remove)
   executor-build:
@@ -50,5 +71,5 @@ services:
       - build
 
 # Optional: persist data
-# volumes:
-#   tako-vm-data:
+volumes:
+  tako-vm-postgres-data:

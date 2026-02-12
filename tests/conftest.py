@@ -2,11 +2,15 @@
 Pytest configuration for Tako VM tests.
 """
 
+import inspect
 import os
 import subprocess
 import tempfile
+import uuid
 import warnings
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import psycopg
 import pytest
 
 # Suppress urllib3 LibreSSL warning on macOS (harmless)
@@ -190,16 +194,46 @@ def temp_data_dir():
     Resets config and sets environment variables to use a temp directory,
     ensuring test isolation from user data.
     """
-    from pathlib import Path
-
     from tako_vm.config import reset_config
 
     with tempfile.TemporaryDirectory() as tmpdir:
         original_data_dir = os.environ.get("TAKO_VM_DATA_DIR")
-        original_db_file = os.environ.get("TAKO_VM_DATABASE_FILE")
+        original_db_url = os.environ.get("TAKO_VM_DATABASE_URL")
+
+        raw_db_url = os.environ.get(
+            "TAKO_VM_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/tako_vm_test"
+        )
+        schema = f"test_{uuid.uuid4().hex}"
+
+        raw_parts = urlsplit(raw_db_url)
+        raw_query = dict(parse_qsl(raw_parts.query, keep_blank_values=True))
+        raw_query.pop("options", None)
+        base_db_url = urlunsplit(
+            (
+                raw_parts.scheme,
+                raw_parts.netloc,
+                raw_parts.path,
+                urlencode(raw_query),
+                raw_parts.fragment,
+            )
+        )
+
+        def with_schema(url: str, schema_name: str) -> str:
+            parts = urlsplit(url)
+            query = dict(parse_qsl(parts.query, keep_blank_values=True))
+            query["options"] = f"-csearch_path={schema_name}"
+            return urlunsplit(
+                (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+            )
+
+        with psycopg.connect(base_db_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+
+        test_db_url = with_schema(base_db_url, schema)
 
         os.environ["TAKO_VM_DATA_DIR"] = tmpdir
-        os.environ["TAKO_VM_DATABASE_FILE"] = str(Path(tmpdir) / "test.db")
+        os.environ["TAKO_VM_DATABASE_URL"] = test_db_url
 
         reset_config()
 
@@ -210,10 +244,14 @@ def temp_data_dir():
             os.environ["TAKO_VM_DATA_DIR"] = original_data_dir
         else:
             os.environ.pop("TAKO_VM_DATA_DIR", None)
-        if original_db_file:
-            os.environ["TAKO_VM_DATABASE_FILE"] = original_db_file
+        if original_db_url:
+            os.environ["TAKO_VM_DATABASE_URL"] = original_db_url
         else:
-            os.environ.pop("TAKO_VM_DATABASE_FILE", None)
+            os.environ.pop("TAKO_VM_DATABASE_URL", None)
+
+        with psycopg.connect(base_db_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
 @pytest.fixture
@@ -223,11 +261,35 @@ def test_storage(temp_data_dir):
 
     Uses the temp_data_dir fixture for isolation.
     """
-    from pathlib import Path
+    import asyncio
 
     from tako_vm.storage import ExecutionStorage
 
-    storage = ExecutionStorage(Path(temp_data_dir) / "test.db")
-    storage.init()
-    yield storage
-    storage.close()
+    storage = ExecutionStorage(os.environ["TAKO_VM_DATABASE_URL"])
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(storage.init())
+
+    class SyncStorageAdapter:
+        def __init__(self, inner: ExecutionStorage):
+            self._inner = inner
+            self._loop = loop
+
+        def _run(self, coro):
+            return self._loop.run_until_complete(coro)
+
+        def __getattr__(self, name):
+            attr = getattr(self._inner, name)
+            if not callable(attr):
+                return attr
+
+            def wrapper(*args, **kwargs):
+                result = attr(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    return self._run(result)
+                return result
+
+            return wrapper
+
+    yield SyncStorageAdapter(storage)
+    loop.run_until_complete(storage.close())
+    loop.close()

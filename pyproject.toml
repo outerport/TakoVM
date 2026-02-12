@@ -46,12 +46,16 @@ server = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pyyaml>=6.0",
+    "psycopg[binary]>=3.2.0",
+    "psycopg-pool>=3.2.0",
 ]
 # All dependencies
 all = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pyyaml>=6.0",
+    "psycopg[binary]>=3.2.0",
+    "psycopg-pool>=3.2.0",
 ]
 # Development dependencies
 dev = [

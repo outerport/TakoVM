@@ -1,0 +1,95 @@
+"""Integration tests for PostgreSQL-backed storage behavior."""
+
+import asyncio
+import os
+from datetime import datetime, timezone
+
+import psycopg
+import pytest
+
+from tako_vm.models import ExecutionRecord, sha256_content, sha256_json
+from tako_vm.storage import ExecutionStorage
+
+
+def _make_record(execution_id: str, idempotency_key: str | None = None) -> ExecutionRecord:
+    return ExecutionRecord(
+        execution_id=execution_id,
+        status="queued",
+        job_type="default",
+        job_ref="default@latest",
+        created_at=datetime.now(timezone.utc),
+        queued_at=datetime.now(timezone.utc),
+        code_hash=sha256_content("print('hi')"),
+        input_hash=sha256_json({"x": 1}),
+        idempotency_key=idempotency_key,
+    )
+
+
+@pytest.mark.asyncio
+async def test_schema_migrations_written(temp_data_dir):
+    storage = ExecutionStorage(os.environ["TAKO_VM_DATABASE_URL"])
+    await storage.init()
+    await storage.close()
+
+    with psycopg.connect(os.environ["TAKO_VM_DATABASE_URL"]) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT version FROM schema_migrations ORDER BY version")
+            versions = [row[0] for row in cur.fetchall()]
+
+    assert "0001_initial" in versions
+
+
+@pytest.mark.asyncio
+async def test_idempotency_unique_index_enforced(temp_data_dir):
+    storage = ExecutionStorage(os.environ["TAKO_VM_DATABASE_URL"])
+    await storage.init()
+
+    await storage.save_record(_make_record("job-1", idempotency_key="same-key"))
+
+    with pytest.raises(psycopg.IntegrityError):
+        await storage.save_record(_make_record("job-2", idempotency_key="same-key"))
+
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_jsonb_roundtrip_for_result_and_artifacts(temp_data_dir):
+    storage = ExecutionStorage(os.environ["TAKO_VM_DATABASE_URL"])
+    await storage.init()
+
+    record = _make_record("job-json")
+    record.result_json = {"ok": True, "items": [1, 2, 3]}
+    await storage.save_record(record)
+
+    loaded = await storage.get_record("job-json")
+    await storage.close()
+
+    assert loaded is not None
+    assert loaded.result_json == {"ok": True, "items": [1, 2, 3]}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_idempotency_conflict_allows_single_write(temp_data_dir):
+    storage = ExecutionStorage(os.environ["TAKO_VM_DATABASE_URL"])
+    await storage.init()
+
+    async def write_record(execution_id: str):
+        try:
+            await storage.save_record(_make_record(execution_id, idempotency_key="race-key"))
+            return "ok"
+        except psycopg.IntegrityError:
+            return "integrity_error"
+
+    results = await asyncio.gather(write_record("race-1"), write_record("race-2"))
+    await storage.close()
+
+    assert sorted(results) == ["integrity_error", "ok"]
+
+    with psycopg.connect(os.environ["TAKO_VM_DATABASE_URL"]) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM execution_records WHERE idempotency_key = %s", ("race-key",)
+            )
+            row = cur.fetchone()
+            count = row[0] if row else 0
+    assert count == 1

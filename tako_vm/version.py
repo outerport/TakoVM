@@ -68,7 +68,7 @@ class VersionManager:
         content = "\n".join(sorted(job_type.requirements))
         return hashlib.sha256(content.encode()).hexdigest()
 
-    def register_version(
+    async def register_version(
         self,
         job_type: JobType,
         image_ref: str,
@@ -106,12 +106,12 @@ class VersionManager:
             image_ref=image_ref,
         )
 
-        self.storage.save_version(version)
+        await self.storage.save_version(version)
         logger.info(f"Registered version {version.full_ref} (tag: {version_tag})")
 
         return version
 
-    def resolve(self, job_type_ref: str) -> Tuple[str, Optional[JobVersion]]:
+    async def resolve(self, job_type_ref: str) -> Tuple[str, Optional[JobVersion]]:
         """
         Resolve job type reference to name and version.
 
@@ -128,7 +128,7 @@ class VersionManager:
         """
         if "@" not in job_type_ref:
             # No version specified - get latest
-            version = self.storage.get_latest_version(job_type_ref)
+            version = await self.storage.get_latest_version(job_type_ref)
             return job_type_ref, version
 
         name, version_spec = job_type_ref.split("@", 1)
@@ -136,10 +136,10 @@ class VersionManager:
         if version_spec.startswith("sha256:"):
             # Digest reference
             digest = version_spec[7:]  # Remove 'sha256:' prefix
-            version = self.storage.get_version_by_digest(name, digest)
+            version = await self.storage.get_version_by_digest(name, digest)
         else:
             # Tag reference (e.g., 'v1.0.0')
-            version = self.storage.get_version_by_tag(name, version_spec)
+            version = await self.storage.get_version_by_tag(name, version_spec)
 
         return name, version
 
@@ -199,7 +199,7 @@ class VersionManager:
 
         return None
 
-    def list_versions(self, job_type_name: str) -> list[JobVersion]:
+    async def list_versions(self, job_type_name: str) -> list[JobVersion]:
         """
         List all versions for a job type.
 
@@ -209,9 +209,9 @@ class VersionManager:
         Returns:
             List of JobVersions, newest first
         """
-        return self.storage.list_versions(job_type_name)
+        return await self.storage.list_versions(job_type_name)
 
-    def version_exists(self, job_type_name: str, version_spec: str) -> bool:
+    async def version_exists(self, job_type_name: str, version_spec: str) -> bool:
         """
         Check if a version exists.
 
@@ -224,9 +224,9 @@ class VersionManager:
         """
         if version_spec.startswith("sha256:"):
             digest = version_spec[7:]
-            return self.storage.get_version_by_digest(job_type_name, digest) is not None
+            return await self.storage.get_version_by_digest(job_type_name, digest) is not None
         else:
-            return self.storage.get_version_by_tag(job_type_name, version_spec) is not None
+            return await self.storage.get_version_by_tag(job_type_name, version_spec) is not None
 
 
 def parse_job_type_ref(job_type_ref: str) -> Tuple[str, Optional[str]]:

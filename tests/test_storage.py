@@ -1,12 +1,12 @@
 """
-Tests for the ExecutionStorage class (SQLite persistence).
+Tests for the ExecutionStorage class (PostgreSQL persistence).
 
 Tests CRUD operations for ExecutionRecords, JobVersions, and DeadLetterQueue.
 """
 
-import tempfile
+import asyncio
+import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -24,34 +24,30 @@ from tako_vm.storage import ExecutionStorage
 
 
 @pytest.fixture
-def storage():
-    """Create a temporary storage instance for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        store = ExecutionStorage(db_path)
-        store.init()
-        yield store
-        store.close()
+def storage(test_storage):
+    """Reuse shared Postgres-backed storage fixture from conftest."""
+    return test_storage
 
 
 class TestExecutionStorageInit:
     """Tests for storage initialization."""
 
-    def test_init_creates_database(self):
-        """Storage init creates database file and tables."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "subdir" / "test.db"
-            store = ExecutionStorage(db_path)
-            store.init()
-
-            assert db_path.exists()
-            store.close()
+    def test_init_creates_database(self, storage):
+        """Storage init creates tables and accepts connections."""
+        records = storage.list_records(limit=1, offset=0)
+        assert records == []
 
     def test_init_idempotent(self, storage):
         """Multiple init calls are safe."""
-        # Should not raise
-        storage.init()
-        storage.init()
+        db_url = os.environ.get(
+            "TAKO_VM_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/tako_vm_test"
+        )
+        store = ExecutionStorage(db_url)
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(store.init())
+        loop.run_until_complete(store.init())
+        loop.run_until_complete(store.close())
+        loop.close()
 
 
 class TestExecutionRecordCRUD:

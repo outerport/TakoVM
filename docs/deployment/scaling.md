@@ -150,16 +150,16 @@ Run multiple Tako VM instances behind a load balancer with shared state.
 | Component | Current | Distributed |
 |-----------|---------|-------------|
 | Job Queue | In-memory asyncio.Queue | Redis or RabbitMQ |
-| Database | SQLite | PostgreSQL |
+| Database | PostgreSQL (single node) | PostgreSQL (clustered/managed) |
 | Artifact Storage | Local filesystem | S3 or shared NFS |
 | Config | Local file | Consul/etcd or env vars |
 
 #### Implementation Phases
 
-**Phase 1: Replace SQLite with PostgreSQL**
+**Phase 1: PostgreSQL storage foundation**
 ```python
 # tako_vm/storage.py
-# Change from sqlite3 to asyncpg
+# Use psycopg async pool
 
 import asyncpg
 
