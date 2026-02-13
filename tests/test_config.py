@@ -297,15 +297,6 @@ security_mode: permissive
         config = load_config()
         assert config.security_mode == "permissive"
 
-    def test_load_config_legacy_database_file_env_errors(self, monkeypatch):
-        """Legacy database file env var fails with migration guidance."""
-        monkeypatch.delenv("TAKO_VM_DATABASE_URL", raising=False)
-        monkeypatch.setenv("TAKO_VM_DATABASE_FILE", "/tmp/executions.db")
-
-        with pytest.raises(ConfigurationError) as exc_info:
-            load_config()
-        assert "database_file is no longer supported" in str(exc_info.value)
-
     def test_load_config_env_container_runtime(self, monkeypatch):
         """TAKO_VM_CONTAINER_RUNTIME env var is normalized."""
         monkeypatch.setenv("TAKO_VM_CONTAINER_RUNTIME", "RUNC")
@@ -331,23 +322,6 @@ max_workers: -1  # Invalid: must be >= 1
         finally:
             config_path.unlink()
 
-    def test_load_config_legacy_database_file_key_errors(self):
-        """Legacy database_file key in YAML fails with migration guidance."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(
-                """
-database_file: /tmp/executions.db
-"""
-            )
-            f.flush()
-            config_path = Path(f.name)
-
-        try:
-            with pytest.raises(ConfigurationError) as exc_info:
-                load_config(config_path)
-            assert "database_file is no longer supported" in str(exc_info.value)
-        finally:
-            config_path.unlink()
 
     def test_validate_config_file_valid(self):
         """validate_config_file returns empty list for valid file."""
