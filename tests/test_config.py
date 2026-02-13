@@ -322,7 +322,6 @@ max_workers: -1  # Invalid: must be >= 1
         finally:
             config_path.unlink()
 
-
     def test_validate_config_file_valid(self):
         """validate_config_file returns empty list for valid file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
