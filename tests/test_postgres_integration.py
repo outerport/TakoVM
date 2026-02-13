@@ -3,6 +3,7 @@
 import asyncio
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 import psycopg
 import pytest
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _make_record(execution_id: str, idempotency_key: str | None = None) -> ExecutionRecord:
+def _make_record(execution_id: str, idempotency_key: Optional[str] = None) -> ExecutionRecord:
     return ExecutionRecord(
         execution_id=execution_id,
         status="queued",
