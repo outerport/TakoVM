@@ -92,7 +92,7 @@ class TestContainerLimits:
     def test_container_limits_forbids_extra(self):
         """ContainerLimits rejects unknown fields."""
         with pytest.raises(ValueError):
-            ContainerLimits(unknown_field="value")
+            ContainerLimits.model_validate({"unknown_field": "value"})
 
 
 class TestJobTypeConfig:
@@ -257,7 +257,7 @@ class TestTakoVMConfig:
     def test_tako_vm_config_forbids_extra(self):
         """TakoVMConfig rejects unknown fields."""
         with pytest.raises(ValueError):
-            TakoVMConfig(unknown_field="value")
+            TakoVMConfig.model_validate({"unknown_field": "value"})
 
 
 class TestConfigLoading:

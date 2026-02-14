@@ -466,6 +466,13 @@ class CodeExecutor:
             # Execute in container with retry for transient failures
             start_time = time.time()
             timed_out = False
+            result: Dict[str, Any] = {
+                "success": False,
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+                "error": "execution failed before container run",
+            }
             retry_ctx = RetryContext(
                 RetryConfig(
                     max_attempts=self.config.max_retry_attempts,

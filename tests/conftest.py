@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg
 import pytest
+from psycopg import sql
 
 # Suppress urllib3 LibreSSL warning on macOS (harmless)
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="urllib3")
@@ -230,7 +231,9 @@ def temp_data_dir():
         try:
             with psycopg.connect(base_db_url, autocommit=True) as conn:
                 with conn.cursor() as cur:
-                    cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+                    cur.execute(
+                        sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema))
+                    )
                     schema_created = True
         except psycopg.Error as exc:
             pytest.skip(f"PostgreSQL test database unavailable: {exc}")
@@ -257,7 +260,9 @@ def temp_data_dir():
         if schema_created:
             with psycopg.connect(base_db_url, autocommit=True) as conn:
                 with conn.cursor() as cur:
-                    cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                    cur.execute(
+                        sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+                    )
 
 
 @pytest.fixture

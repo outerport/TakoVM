@@ -25,7 +25,7 @@ Provides a typed interface for executing functions in isolated containers:
 import inspect
 import textwrap
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
-from typing import Any, Callable, Optional, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Optional, TypeVar, cast, get_type_hints
 
 import requests
 
@@ -123,8 +123,9 @@ class TakoVM:
             raise ValidationError("Function must have a return type hint")
 
         output_type = hints["return"]
-        if not is_dataclass(output_type):
+        if not inspect.isclass(output_type) or not is_dataclass(output_type):
             raise ValidationError(f"Return type must be a dataclass, got {output_type}")
+        output_cls = cast(type[OutputT], output_type)
 
         # Get input type from first parameter
         params = list(hints.keys())
@@ -133,14 +134,15 @@ class TakoVM:
             raise ValidationError("Function must have at least one parameter")
 
         input_type = hints[params[0]]
-        if not is_dataclass(input_type):
+        if not inspect.isclass(input_type) or not is_dataclass(input_type):
             raise ValidationError(f"Input parameter must be a dataclass type, got {input_type}")
+        input_cls = cast(type[Any], input_type)
 
         # Generate the wrapper code
-        code = self._generate_code(func, input_type, output_type)
+        code = self._generate_code(func, input_cls, output_cls)
 
         # Serialize input
-        input_dict = asdict(input_data)
+        input_dict = asdict(cast(Any, input_data))
 
         # Execute
         result = self._execute(code, input_dict, timeout, job_type)
@@ -152,10 +154,10 @@ class TakoVM:
 
         # Deserialize output
         try:
-            return output_type(**result.output)
+            return output_cls(**cast(dict[str, Any], result.output))
         except (TypeError, ValueError) as e:
             raise ValidationError(
-                f"Failed to deserialize output to {output_type.__name__}: {e}"
+                f"Failed to deserialize output to {output_cls.__name__}: {e}"
             ) from e
 
     def send_raw(
@@ -184,22 +186,32 @@ class TakoVM:
         params = [k for k in hints.keys() if k != "return"]
         input_type = hints[params[0]] if params else type(input_data)
 
-        code = self._generate_code(func, input_type, output_type)
-        input_dict = asdict(input_data)
+        if not inspect.isclass(output_type) or not is_dataclass(output_type):
+            raise ValidationError(f"Return type must be a dataclass, got {output_type}")
+        output_cls = cast(type[Any], output_type)
+
+        if not inspect.isclass(input_type) or not is_dataclass(input_type):
+            raise ValidationError(f"Input parameter must be a dataclass type, got {input_type}")
+        input_cls = cast(type[Any], input_type)
+
+        code = self._generate_code(func, input_cls, output_cls)
+        input_dict = asdict(cast(Any, input_data))
 
         result = self._execute(code, input_dict, timeout, job_type)
 
         # Deserialize output if successful
         if result.success and result.output:
             try:
-                result.output = output_type(**result.output)
+                result.output = output_cls(**cast(dict[str, Any], result.output))
             except (TypeError, ValueError, KeyError):
                 # Keep as dict if deserialization fails (type mismatch, missing fields, etc.)
                 pass
 
         return result
 
-    def _generate_code(self, func: Callable, input_type: Type, output_type: Type) -> str:
+    def _generate_code(
+        self, func: Callable[..., Any], input_type: type[Any], output_type: type[Any]
+    ) -> str:
         """Generate wrapper code for execution in the sandbox."""
 
         # Get function source
@@ -247,7 +259,7 @@ _execute()
 """
         return code.strip()
 
-    def _get_dataclass_source(self, cls: Type) -> str:
+    def _get_dataclass_source(self, cls: type[Any]) -> str:
         """Get the source code for a dataclass."""
         try:
             source = inspect.getsource(cls)
@@ -256,11 +268,11 @@ _execute()
             # If we can't get source, generate it from fields
             return self._generate_dataclass_source(cls)
 
-    def _generate_dataclass_source(self, cls: Type) -> str:
+    def _generate_dataclass_source(self, cls: type[Any]) -> str:
         """Generate dataclass source code from its fields."""
         lines = ["@dataclass", f"class {cls.__name__}:"]
 
-        for field in fields(cls):
+        for field in fields(cast(Any, cls)):
             type_name = self._get_type_name(field.type)
             if field.default_factory is MISSING:
                 if field.default is not MISSING:
@@ -272,10 +284,10 @@ _execute()
 
         return "\n".join(lines)
 
-    def _get_type_name(self, t: Type) -> str:
+    def _get_type_name(self, t: object) -> str:
         """Get a string representation of a type."""
         if hasattr(t, "__name__"):
-            return t.__name__
+            return cast(Any, t).__name__
         return str(t)
 
     def _execute(

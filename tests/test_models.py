@@ -12,10 +12,12 @@ from pydantic import ValidationError
 from tako_vm.models import (
     Artifact,
     DeadLetterEntry,
+    ErrorType,
     ExecutionError,
     ExecutionRecord,
     ExecutionTiming,
     InputArtifact,
+    JobStatus,
     JobVersion,
     ResourceUsage,
     sha256_content,
@@ -81,7 +83,7 @@ class TestResourceUsage:
     def test_resource_usage_forbids_extra(self):
         """ResourceUsage rejects unknown fields."""
         with pytest.raises(ValidationError):
-            ResourceUsage(unknown_field="value")
+            ResourceUsage.model_validate({"unknown_field": "value"})
 
 
 class TestExecutionTiming:
@@ -195,7 +197,7 @@ class TestExecutionError:
 
     def test_execution_error_types(self):
         """ExecutionError accepts all defined error types."""
-        valid_types = [
+        valid_types: list[ErrorType] = [
             "timeout",
             "oom",
             "cancelled",
@@ -245,7 +247,15 @@ class TestExecutionRecord:
 
     def test_execution_record_status_values(self):
         """ExecutionRecord accepts valid status values."""
-        valid_statuses = ["queued", "running", "succeeded", "failed", "timeout", "oom", "cancelled"]
+        valid_statuses: list[JobStatus] = [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "timeout",
+            "oom",
+            "cancelled",
+        ]
         for status in valid_statuses:
             record = ExecutionRecord(status=status)
             assert record.status == status
@@ -294,7 +304,7 @@ class TestExecutionRecord:
 
     def test_execution_record_stdout_stderr_ensure_string(self):
         """ExecutionRecord ensures stdout/stderr are strings."""
-        record = ExecutionRecord(stdout=None, stderr=None)
+        record = ExecutionRecord.model_validate({"stdout": None, "stderr": None})
         assert record.stdout == ""
         assert record.stderr == ""
 
@@ -402,7 +412,7 @@ class TestDeadLetterEntry:
 
     def test_dead_letter_entry_error_types(self):
         """DeadLetterEntry accepts all error types."""
-        valid_types = ["timeout", "oom", "docker_error", "internal_error"]
+        valid_types: list[ErrorType] = ["timeout", "oom", "docker_error", "internal_error"]
         for error_type in valid_types:
             entry = DeadLetterEntry(job_id="job", job_data={}, error_type=error_type)
             assert entry.error_type == error_type

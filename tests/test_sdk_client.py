@@ -5,6 +5,7 @@ Tests the typed function execution client with mocked HTTP responses.
 """
 
 from dataclasses import dataclass
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -95,7 +96,7 @@ class TestValidation:
         client = TakoVM()
 
         with pytest.raises(ValidationError) as exc_info:
-            client.send(add_numbers, {"x": 1, "y": 2})  # dict, not dataclass
+            client.send(add_numbers, cast(Any, {"x": 1, "y": 2}))  # dict, not dataclass
 
         assert "must be a dataclass instance" in str(exc_info.value)
 
@@ -131,7 +132,7 @@ class TestValidation:
             return OutputData(result=0)
 
         with pytest.raises(ValidationError) as exc_info:
-            client.send(no_params, InputData(1, 2))
+            client.send(cast(Any, no_params), InputData(1, 2))
 
         assert "at least one parameter" in str(exc_info.value)
 

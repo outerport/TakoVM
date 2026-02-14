@@ -7,7 +7,7 @@ Provides async CRUD operations for ExecutionRecords and JobVersions.
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Mapping, Optional, cast
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -27,6 +27,7 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 MIGRATION_LOCK_ID = 94857231
+RowMapping = Mapping[str, Any]
 
 
 MIGRATIONS: list[tuple[str, str]] = [
@@ -345,7 +346,7 @@ class ExecutionStorage:
 
         if not row:
             return None
-        return self._row_to_record(row)
+        return self._row_to_record(cast(RowMapping, row))
 
     async def get_by_idempotency_key(self, key: str) -> Optional[ExecutionRecord]:
         """Retrieve execution record by idempotency key."""
@@ -358,7 +359,7 @@ class ExecutionStorage:
 
         if not row:
             return None
-        return self._row_to_record(row)
+        return self._row_to_record(cast(RowMapping, row))
 
     async def list_records(
         self,
@@ -387,7 +388,7 @@ class ExecutionStorage:
             cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
 
-        return [self._row_to_record(row) for row in rows]
+        return [self._row_to_record(cast(RowMapping, row)) for row in rows]
 
     async def cleanup_old_records(self, ttl_days: int) -> int:
         """Delete records older than TTL."""
@@ -400,7 +401,7 @@ class ExecutionStorage:
             )
             return cursor.rowcount
 
-    def _row_to_record(self, row: Dict[str, Any]) -> ExecutionRecord:
+    def _row_to_record(self, row: RowMapping) -> ExecutionRecord:
         """Convert database row to ExecutionRecord."""
         resource_usage = None
         if row.get("wall_time_ms") is not None:
@@ -537,7 +538,7 @@ class ExecutionStorage:
 
         if not row:
             return None
-        return self._row_to_version(row)
+        return self._row_to_version(cast(RowMapping, row))
 
     async def get_version_by_tag(
         self, job_type_name: str, version_tag: str
@@ -553,7 +554,7 @@ class ExecutionStorage:
 
         if not row:
             return None
-        return self._row_to_version(row)
+        return self._row_to_version(cast(RowMapping, row))
 
     async def get_latest_version(self, job_type_name: str) -> Optional[JobVersion]:
         """Get most recent version for job type."""
@@ -572,7 +573,7 @@ class ExecutionStorage:
 
         if not row:
             return None
-        return self._row_to_version(row)
+        return self._row_to_version(cast(RowMapping, row))
 
     async def list_versions(self, job_type_name: str) -> List[JobVersion]:
         """List all versions for job type."""
@@ -588,9 +589,9 @@ class ExecutionStorage:
             )
             rows = await cursor.fetchall()
 
-        return [self._row_to_version(row) for row in rows]
+        return [self._row_to_version(cast(RowMapping, row)) for row in rows]
 
-    def _row_to_version(self, row: Dict[str, Any]) -> JobVersion:
+    def _row_to_version(self, row: RowMapping) -> JobVersion:
         """Convert database row to JobVersion."""
         return JobVersion(
             digest=row["digest"],
@@ -627,7 +628,8 @@ class ExecutionStorage:
                 ),
             )
             row = await cursor.fetchone()
-            return int(row["id"]) if row else 0
+            row_map = cast(RowMapping, row) if row else None
+            return int(row_map["id"]) if row_map else 0
 
     async def get_dlq_entry(self, entry_id: int) -> Optional[DeadLetterEntry]:
         """Get a DLQ entry by ID."""
@@ -640,7 +642,7 @@ class ExecutionStorage:
 
         if not row:
             return None
-        return self._row_to_dlq_entry(row)
+        return self._row_to_dlq_entry(cast(RowMapping, row))
 
     async def list_dlq_entries(
         self, error_type: Optional[str] = None, limit: int = 100, offset: int = 0
@@ -661,7 +663,7 @@ class ExecutionStorage:
             cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
 
-        return [self._row_to_dlq_entry(row) for row in rows]
+        return [self._row_to_dlq_entry(cast(RowMapping, row)) for row in rows]
 
     async def remove_from_dlq(self, entry_id: int) -> bool:
         """Remove an entry from the dead letter queue."""
@@ -679,7 +681,8 @@ class ExecutionStorage:
         async with pool.connection() as conn:
             total_cursor = await conn.execute("SELECT COUNT(*) AS count FROM dead_letter_queue")
             total_row = await total_cursor.fetchone()
-            total = int(total_row["count"]) if total_row else 0
+            total_row_map = cast(RowMapping, total_row) if total_row else None
+            total = int(total_row_map["count"]) if total_row_map else 0
 
             by_error_cursor = await conn.execute(
                 """
@@ -693,7 +696,10 @@ class ExecutionStorage:
 
         return {
             "total": total,
-            "by_error_type": {row["error_type"]: int(row["count"]) for row in by_error_rows},
+            "by_error_type": {
+                cast(str, cast(RowMapping, row)["error_type"]): int(cast(RowMapping, row)["count"])
+                for row in by_error_rows
+            },
         }
 
     async def cleanup_old_dlq_entries(self, ttl_days: int) -> int:
@@ -707,7 +713,7 @@ class ExecutionStorage:
             )
             return cursor.rowcount
 
-    def _row_to_dlq_entry(self, row: Dict[str, Any]) -> DeadLetterEntry:
+    def _row_to_dlq_entry(self, row: RowMapping) -> DeadLetterEntry:
         """Convert database row to DeadLetterEntry."""
         job_data = _decode_json_field(row.get("job_data_json")) or {}
         return DeadLetterEntry(

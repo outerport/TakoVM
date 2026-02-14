@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import List, Tuple
 
+from .models import ErrorType
+
 logger = logging.getLogger(__name__)
 
 # Patterns to sanitize from error messages (pattern, replacement)
@@ -158,7 +160,7 @@ def compute_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def classify_error(exit_code: int, stderr: str, timed_out: bool = False) -> Tuple[str, str]:
+def classify_error(exit_code: int, stderr: str, timed_out: bool = False) -> Tuple[ErrorType, str]:
     """
     Classify error type from execution results.
 
