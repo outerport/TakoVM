@@ -108,3 +108,9 @@ markers = [
     "requires_gvisor: tests that require gVisor runtime",
     "slow: marks tests as slow",
 ]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "pyright>=1.1.408",
+]
