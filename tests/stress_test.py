@@ -142,7 +142,7 @@ async def make_request(
     client: httpx.AsyncClient,
     method: str,
     url: str,
-    json_data: Dict[str, Any] = None,
+    json_data: Optional[Dict[str, Any]] = None,
 ) -> tuple[bool, float, str]:
     """
     Make an HTTP request and return (success, latency_ms, error).
@@ -204,7 +204,7 @@ async def stress_test_health(
     result.duration_sec = time.perf_counter() - start
 
     for resp in responses:
-        if isinstance(resp, Exception):
+        if isinstance(resp, BaseException):
             result.failed += 1
             error = str(type(resp).__name__)
             result.errors[error] = result.errors.get(error, 0) + 1
@@ -254,7 +254,7 @@ async def stress_test_sync_execution(
     result.duration_sec = time.perf_counter() - start
 
     for resp in responses:
-        if isinstance(resp, Exception):
+        if isinstance(resp, BaseException):
             result.failed += 1
             error = str(type(resp).__name__)
             result.errors[error] = result.errors.get(error, 0) + 1
@@ -318,7 +318,7 @@ async def stress_test_async_execution(
     result.duration_sec = time.perf_counter() - start
 
     for resp in responses:
-        if isinstance(resp, Exception):
+        if isinstance(resp, BaseException):
             result.failed += 1
             error = str(type(resp).__name__)
             result.errors[error] = result.errors.get(error, 0) + 1
@@ -387,7 +387,7 @@ async def stress_test_queue_flood(
     result.duration_sec = time.perf_counter() - start
 
     for resp in responses:
-        if isinstance(resp, Exception):
+        if isinstance(resp, BaseException):
             result.failed += 1
             error = str(type(resp).__name__)
             result.errors[error] = result.errors.get(error, 0) + 1
@@ -453,7 +453,7 @@ async def stress_test_idempotency(
     result.duration_sec = time.perf_counter() - start
 
     for resp in responses:
-        if isinstance(resp, Exception):
+        if isinstance(resp, BaseException):
             result.failed += 1
             error = str(type(resp).__name__)
             result.errors[error] = result.errors.get(error, 0) + 1

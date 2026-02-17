@@ -26,7 +26,7 @@ Sandbox solutions like [e2b](https://e2b.dev) and [microsandbox](https://github.
 | You build | With sandbox-only | With Tako VM |
 |-----------|-------------------|--------------|
 | Job queue | Redis + Celery/Bull | ✅ Built-in |
-| Execution history | Postgres + schema | ✅ SQLite included |
+| Execution history | Postgres + schema | ✅ PostgreSQL included |
 | Retry logic | Custom code | ✅ Automatic |
 | Idempotency | Deduplication logic | ✅ `idempotency_key` |
 | Replay/debugging | Custom tooling | ✅ Rerun/fork API |
@@ -119,6 +119,10 @@ The first run builds the executor Docker image automatically (~30 seconds one-ti
 For production workloads with job queuing, retries, and execution history:
 
 ```bash
+# Zero-setup local development (starts managed PostgreSQL if needed)
+tako-vm dev up --with-server
+
+# Or start server directly (auto-starts local PostgreSQL when using defaults)
 tako-vm server
 ```
 
@@ -159,6 +163,10 @@ print(result.result)  # 30
 tako-vm --help                    # Show all commands
 tako-vm server                    # Start the API server
 tako-vm server --port 9000        # Custom port
+tako-vm dev up                    # Start local PostgreSQL for development
+tako-vm dev up --with-server      # Start local PostgreSQL + API server
+tako-vm dev status                # Check local PostgreSQL helper status
+tako-vm dev down                  # Stop local PostgreSQL helper container
 tako-vm --config my.yaml server   # Use specific config file
 
 tako-vm config                    # Show current configuration
@@ -200,7 +208,7 @@ export TAKO_VM_CONFIG=/path/to/config.yaml
 
 # Override paths
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
-export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/db.sqlite
+export TAKO_VM_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tako_vm
 ```
 
 ### Container Limits
@@ -539,7 +547,7 @@ tako-vm/
 │   ├── cli.py               # CLI entry point
 │   ├── config.py            # Pydantic configuration
 │   ├── models.py            # Data models
-│   ├── storage.py           # SQLite persistence
+│   ├── storage.py           # PostgreSQL persistence
 │   └── job_types.py         # Job type definitions
 ├── docker/
 │   ├── Dockerfile.executor  # Base executor image (with uv)

@@ -19,7 +19,7 @@
                      │        │                                  │          │
                      │        ▼                                  ▼          │
                      │  ┌────────────┐              ┌────────────────────┐  │
-                     │  │  SQLite    │              │   Docker Engine    │  │
+                     │  │ PostgreSQL │              │   Docker Engine    │  │
                      │  │  Storage   │              │                    │  │
                      │  │ (history)  │              │  ┌──────────────┐  │  │
                      │  └────────────┘              │  │  Executor    │  │  │
@@ -229,7 +229,7 @@ Step 2: Start Server
     │  Tako VM Server                              │
     │  ├── FastAPI on :8000                        │
     │  ├── WorkerPool (4 workers default)          │
-    │  └── SQLite for execution history            │
+    │  └── PostgreSQL for execution history        │
     └──────────────────────────────────────────────┘
 
 
@@ -317,7 +317,7 @@ tako-vm/
 │   │   └── retry.py         # Retry logic for transient failures
 │   ├── config.py            # Pydantic settings (TakoVMConfig), YAML loading
 │   ├── models.py            # ExecutionRecord, JobStatus, ErrorType
-│   ├── storage.py           # SQLite persistence
+│   ├── storage.py           # PostgreSQL persistence
 │   ├── security.py          # Validation, error sanitization
 │   ├── job_types.py         # JobType, JobTypeRegistry
 │   └── version.py           # VersionManager for job type versioning

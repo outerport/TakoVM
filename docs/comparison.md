@@ -137,7 +137,7 @@ Features:
   - Full audit trail with lineage tracking
   - Artifact downloads with ETag caching
   - Job types with pre-configured environments
-  - SQLite storage for execution history
+  - PostgreSQL storage for execution history
   - Dead letter queue for failed jobs
   - Circuit breaker for Docker health
 ```
@@ -305,7 +305,7 @@ Features:
 | **Public Protocol** | REST/HTTP | REST/HTTP | REST/HTTP |
 | **Communication** | Sync Docker calls | REST → gRPC proxy → orchestrator | REST → multi-service daemon |
 | **Deployment** | Docker Compose / single host | Kubernetes + VPC + monitoring | Kubernetes / single host |
-| **Observability** | SQLite + logs | Monitoring collector + metrics | Logs + service health |
+| **Observability** | PostgreSQL + logs | Monitoring collector + metrics | Logs + service health |
 
 ---
 
@@ -314,4 +314,3 @@ Features:
 - [Quick Start](getting-started/quickstart.md) - Try Tako VM
 - [Architecture](architecture.md) - How Tako VM works
 - [Deployment](deployment/how-to-deploy.md) - Deploy to production
-

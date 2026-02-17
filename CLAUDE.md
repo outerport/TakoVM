@@ -13,7 +13,7 @@ tako_vm/
 ├── execution/builder.py # ContainerBuilder (for pre-built images)
 ├── config.py            # Pydantic config (TakoVMConfig)
 ├── models.py            # ExecutionRecord, JobStatus
-├── storage.py           # SQLite persistence
+├── storage.py           # PostgreSQL persistence
 docker/
 ├── Dockerfile.executor  # Base executor image (uv + gosu)
 ├── Dockerfile.server    # API server image
@@ -86,7 +86,7 @@ tako-vm build job-type data-processing
 
 - **RuntimeUnavailableError: gVisor not available** -> Install gVisor: https://gvisor.dev/docs/user_guide/install/ or set `security_mode: permissive` for dev
 - **ImageNotFound: code-executor:latest** -> Build image first (see above)
-- **sqlite3.OperationalError: no such column** -> Delete `~/.tako_vm/executions.db` (schema changed)
+- **PostgreSQL migration/connection errors** -> Verify `database_url` and database reachability
 - **Test isolation** -> Use `reset_config()` and temp database pattern from `tests/test_api.py`
 - **Dep install fails (network)** -> Jobs with requirements need network; use pre-built for true isolation
 

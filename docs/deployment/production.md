@@ -316,7 +316,7 @@ max_workers: 16  # More concurrent executions
 
 | Path | Contents | Frequency |
 |------|----------|-----------|
-| `/var/lib/tako-vm/executions.db` | Execution records + DLQ | Daily |
+| PostgreSQL database | Execution records + DLQ | Daily |
 | `/etc/tako-vm/config.yaml` | Configuration | On change |
 
 ### Backup Script
@@ -331,7 +331,7 @@ DATE=$(date +%Y%m%d)
 mkdir -p $BACKUP_DIR
 
 # Backup database (includes execution records and DLQ)
-sqlite3 /var/lib/tako-vm/executions.db ".backup '$BACKUP_DIR/executions-$DATE.db'"
+pg_dump "$TAKO_VM_DATABASE_URL" > "$BACKUP_DIR/executions-$DATE.sql"
 
 # Retain 30 days
 find $BACKUP_DIR -mtime +30 -delete

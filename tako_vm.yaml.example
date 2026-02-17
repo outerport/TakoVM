@@ -82,7 +82,7 @@ container_limits:
 # =============================================================================
 
 # data_dir: ~/.tako_vm           # Data directory
-# database_file: ~/.tako_vm/executions.db
+# database_url: postgresql://postgres:postgres@localhost:5432/tako_vm
 # seccomp_profile_path: null     # Uses built-in profile
 
 # =============================================================================

@@ -5,36 +5,25 @@ Tests job submission, status checking, and result retrieval
 using FastAPI's TestClient (no running server required).
 """
 
-import os
-import tempfile
-
 import pytest
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client():
+def client(temp_data_dir):
     """Create test client with lifespan management and temp database."""
-    # Use a temporary database to avoid conflicts with existing data
-    with tempfile.TemporaryDirectory() as tmpdir:
-        os.environ["TAKO_VM_DATA_DIR"] = tmpdir
-        os.environ["TAKO_VM_DATABASE_FILE"] = os.path.join(tmpdir, "test.db")
+    from tako_vm.config import reset_config
 
-        # Reset config to pick up new env vars
-        from tako_vm.config import reset_config
+    reset_config()
 
-        reset_config()
+    # Import app after setting env vars
+    from tako_vm.server.app import app
 
-        # Import app after setting env vars
-        from tako_vm.server.app import app
+    with TestClient(app) as test_client:
+        yield test_client
 
-        with TestClient(app) as test_client:
-            yield test_client
-
-        # Cleanup
-        reset_config()
-        os.environ.pop("TAKO_VM_DATA_DIR", None)
-        os.environ.pop("TAKO_VM_DATABASE_FILE", None)
+    # Cleanup
+    reset_config()
 
 
 class TestHealthEndpoint:

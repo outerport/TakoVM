@@ -27,7 +27,7 @@ Sandbox-only tools (e2b, microsandbox) give you isolated execution. You still ne
 | Feature | Sandbox-only | Tako VM |
 |---------|--------------|---------|
 | Job queue | ❌ Build with Redis/Celery | ✅ Built-in |
-| Execution history | ❌ Build with Postgres | ✅ SQLite included |
+| Execution history | ❌ Build with Postgres | ✅ PostgreSQL included |
 | Retries | ❌ Write retry logic | ✅ Automatic |
 | Replay/debugging | ❌ Build custom tooling | ✅ Rerun/fork API |
 | Idempotency | ❌ Implement deduplication | ✅ `idempotency_key` |
@@ -99,7 +99,7 @@ print(response.json())
                           │
                           ▼
                     ┌─────────────┐
-                    │   SQLite    │
+                    │ PostgreSQL  │
                     │  (Records)  │
                     └─────────────┘
 ```

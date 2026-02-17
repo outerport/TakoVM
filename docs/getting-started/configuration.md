@@ -30,6 +30,7 @@ max_workers: 4
 log_level: INFO            # DEBUG, INFO, WARNING, ERROR, CRITICAL
 server_host: "0.0.0.0"     # Host to bind to
 server_port: 8000          # Port to bind to
+database_url: "postgresql://postgres:postgres@localhost:5432/tako_vm"
 
 # ==============================================================================
 # EXECUTION LIMITS
@@ -120,8 +121,8 @@ export TAKO_VM_CONFIG=/path/to/config.yaml
 # Override data directory
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
 
-# Override database file path
-export TAKO_VM_DATABASE_FILE=/var/lib/tako_vm/executions.db
+# Override database URL
+export TAKO_VM_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tako_vm
 
 # Security mode (strict or permissive)
 export TAKO_VM_SECURITY_MODE=permissive  # Allow fallback to runc if gVisor unavailable
@@ -141,7 +142,7 @@ export XDG_DATA_HOME=/custom/data/path  # Tako VM will use $XDG_DATA_HOME/tako_v
 |----------|-------------|---------|
 | `TAKO_VM_CONFIG` | Config file path | Search in standard locations |
 | `TAKO_VM_DATA_DIR` | Data directory | `~/.tako_vm` or `$XDG_DATA_HOME/tako_vm` |
-| `TAKO_VM_DATABASE_FILE` | SQLite database path | `$DATA_DIR/executions.db` |
+| `TAKO_VM_DATABASE_URL` | PostgreSQL connection URL | `postgresql://postgres:postgres@localhost:5432/tako_vm` |
 | `TAKO_VM_SECURITY_MODE` | Security mode (`strict` or `permissive`) | `strict` |
 | `TAKO_VM_CONTAINER_RUNTIME` | Container runtime (`runsc` or `runc`) | `runsc` |
 | `TAKO_VM_ENABLE_SECCOMP` | Enable seccomp syscall filtering | `true` |

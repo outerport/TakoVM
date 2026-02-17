@@ -203,6 +203,7 @@ print("Done")
             result = sb.run(code)
 
         assert result.success is False
+        assert result.error is not None
         assert "timed out" in result.error.lower()
 
     def test_sandbox_run_timeout_override(self):
@@ -216,6 +217,7 @@ print("Done")
             result = sb.run(code, timeout=2)
 
         assert result.success is False
+        assert result.error is not None
         assert "timed out" in result.error.lower()
 
     def test_sandbox_fast_code_succeeds(self):
@@ -382,6 +384,7 @@ print(data['message'])
         result = sandbox_run("import time; time.sleep(30)", timeout=2)
 
         assert result.success is False
+        assert result.error is not None
         assert "timed out" in result.error.lower()
 
 
@@ -407,6 +410,7 @@ print('done')
             result = sb.run(code)
 
         assert result.success is True
+        assert result.duration_ms is not None
         # Should take at least 1000ms (1 second sleep)
         assert result.duration_ms >= 1000
 

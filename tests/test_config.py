@@ -92,7 +92,7 @@ class TestContainerLimits:
     def test_container_limits_forbids_extra(self):
         """ContainerLimits rejects unknown fields."""
         with pytest.raises(ValueError):
-            ContainerLimits(unknown_field="value")
+            ContainerLimits.model_validate({"unknown_field": "value"})
 
 
 class TestJobTypeConfig:
@@ -179,13 +179,13 @@ class TestTakoVMConfig:
         assert config.security_mode == "strict"
 
     def test_tako_vm_config_path_resolution(self):
-        """TakoVMConfig resolves paths correctly."""
+        """TakoVMConfig resolves data_dir while keeping database URL."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = TakoVMConfig(data_dir=tmpdir)
             config.resolve_paths()
 
             assert config.data_dir == Path(tmpdir)
-            assert config.database_file == Path(tmpdir) / "executions.db"
+            assert config.database_url.startswith("postgresql://")
 
     def test_tako_vm_config_timeout_validation(self):
         """TakoVMConfig validates timeout relationships."""
@@ -193,6 +193,16 @@ class TestTakoVMConfig:
         with pytest.raises(ValueError) as exc_info:
             TakoVMConfig(default_timeout=100, max_timeout=50)
         assert "default_timeout must be <= max_timeout" in str(exc_info.value)
+
+    def test_tako_vm_config_normalizes_psycopg_url_scheme(self):
+        """database_url normalizes postgresql+psycopg scheme for psycopg pool."""
+        config = TakoVMConfig(database_url="postgresql+psycopg://user:pass@localhost:5432/testdb")
+        assert config.database_url == "postgresql://user:pass@localhost:5432/testdb"
+
+    def test_tako_vm_config_accepts_unix_socket_dsn(self):
+        """database_url accepts libpq unix socket DSNs."""
+        config = TakoVMConfig(database_url="postgresql:///testdb?host=/var/run/postgresql")
+        assert config.database_url == "postgresql:///testdb?host=/var/run/postgresql"
 
     def test_tako_vm_config_container_runtime_validation(self):
         """TakoVMConfig validates container runtime."""
@@ -247,7 +257,7 @@ class TestTakoVMConfig:
     def test_tako_vm_config_forbids_extra(self):
         """TakoVMConfig rejects unknown fields."""
         with pytest.raises(ValueError):
-            TakoVMConfig(unknown_field="value")
+            TakoVMConfig.model_validate({"unknown_field": "value"})
 
 
 class TestConfigLoading:

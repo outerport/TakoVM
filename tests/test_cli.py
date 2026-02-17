@@ -4,6 +4,8 @@ Tests for Tako VM CLI (command-line interface).
 Tests command parsing and execution using subprocess/mock approaches.
 """
 
+import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -124,7 +126,7 @@ class TestCLIConfig:
             [sys.executable, "-m", "tako_vm.cli", "config"],
             capture_output=True,
             text=True,
-            env={**subprocess.os.environ, "TAKO_VM_SECURITY_MODE": "permissive"},
+            env={**os.environ, "TAKO_VM_SECURITY_MODE": "permissive"},
         )
         assert result.returncode == 0
         assert "Tako VM Configuration" in result.stdout
@@ -136,7 +138,7 @@ class TestCLIConfig:
             [sys.executable, "-m", "tako_vm.cli", "config", "--json"],
             capture_output=True,
             text=True,
-            env={**subprocess.os.environ, "TAKO_VM_SECURITY_MODE": "permissive"},
+            env={**os.environ, "TAKO_VM_SECURITY_MODE": "permissive"},
         )
         assert result.returncode == 0
         # Should be valid JSON
@@ -144,6 +146,9 @@ class TestCLIConfig:
 
         data = json.loads(result.stdout)
         assert "max_workers" in data
+        assert "database_url" in data
+        assert "***@" in data["database_url"]
+        assert "postgres:postgres@" not in data["database_url"]
 
 
 class TestCLIStatus:
@@ -642,13 +647,25 @@ class TestCLISubprocessExtended:
         assert result.returncode == 0
         assert "--json" in result.stdout
 
+    def test_dev_help(self):
+        """dev --help shows development subcommands."""
+        result = subprocess.run(
+            [sys.executable, "-m", "tako_vm.cli", "dev", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "up" in result.stdout
+        assert "status" in result.stdout
+        assert "down" in result.stdout
+
     def test_config_shows_all_sections(self):
         """config command shows all configuration sections."""
         result = subprocess.run(
             [sys.executable, "-m", "tako_vm.cli", "config"],
             capture_output=True,
             text=True,
-            env={**subprocess.os.environ, "TAKO_VM_SECURITY_MODE": "permissive"},
+            env={**os.environ, "TAKO_VM_SECURITY_MODE": "permissive"},
         )
         assert result.returncode == 0
         assert "[Mode]" in result.stdout
@@ -691,3 +708,106 @@ class TestCLISubprocessExtended:
             assert result.returncode == 0
         finally:
             Path(config_path).unlink()
+
+
+class TestCLIDevHelpers:
+    """Tests for dev helper functionality."""
+
+    def test_dev_up_without_server(self, capsys):
+        """dev_up starts local postgres without launching server."""
+        from tako_vm.cli import MANAGED_POSTGRES_URL, dev_up
+
+        args = argparse.Namespace(with_server=False, host="0.0.0.0", port=8000, reload=False)
+
+        with patch("tako_vm.cli._ensure_managed_postgres") as ensure_pg:
+            dev_up(args)
+
+        captured = capsys.readouterr()
+        ensure_pg.assert_called_once()
+        assert "Local PostgreSQL is ready" in captured.out
+        assert MANAGED_POSTGRES_URL in captured.out
+
+    def test_run_server_auto_starts_local_postgres(self):
+        """run_server auto-starts managed postgres on default URL failure."""
+        import uvicorn
+
+        from tako_vm import config as config_module
+        from tako_vm.cli import DEFAULT_DATABASE_URL, MANAGED_POSTGRES_URL, run_server
+        from tako_vm.config import TakoVMConfig, reset_config
+
+        reset_config()
+        mock_config = TakoVMConfig(database_url=DEFAULT_DATABASE_URL, security_mode="permissive")
+
+        args = argparse.Namespace(
+            host="0.0.0.0", port=8000, reload=False, workers=None, auto_start_postgres=True
+        )
+
+        with patch.object(config_module, "get_config", return_value=mock_config):
+            with patch("tako_vm.cli._can_connect_database", return_value=False):
+                with patch("tako_vm.cli._ensure_managed_postgres") as ensure_pg:
+                    with patch.object(uvicorn, "run"):
+                        run_server(args)
+
+        ensure_pg.assert_called_once()
+        assert mock_config.database_url == MANAGED_POSTGRES_URL
+
+        reset_config()
+
+    def test_dev_status_running(self, capsys):
+        """dev_status reports running and reachable state."""
+        from tako_vm.cli import dev_status
+
+        args = argparse.Namespace()
+        with patch("tako_vm.cli._managed_postgres_state", return_value="running"):
+            with patch("tako_vm.cli._can_connect_database", return_value=True):
+                dev_status(args)
+
+        captured = capsys.readouterr()
+        assert "Status: running (reachable)" in captured.out
+
+    def test_dev_down_stops_running_container(self, capsys):
+        """dev_down stops container when it is running."""
+        from tako_vm.cli import MANAGED_POSTGRES_CONTAINER, dev_down
+
+        args = argparse.Namespace()
+        with patch("tako_vm.cli._managed_postgres_state", return_value="running"):
+            with patch("tako_vm.cli.subprocess.run") as run_mock:
+                dev_down(args)
+
+        captured = capsys.readouterr()
+        run_mock.assert_called_once_with(
+            ["docker", "stop", MANAGED_POSTGRES_CONTAINER],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert "Local PostgreSQL stopped" in captured.out
+
+    def test_dev_down_missing_container(self, capsys):
+        """dev_down handles missing container gracefully."""
+        from tako_vm.cli import dev_down
+
+        args = argparse.Namespace()
+        with patch("tako_vm.cli._managed_postgres_state", return_value="missing"):
+            dev_down(args)
+
+        captured = capsys.readouterr()
+        assert "not created" in captured.out
+
+    def test_dev_status_reports_docker_unavailable_when_daemon_down(self, capsys):
+        """dev_status surfaces daemon outage as docker unavailable."""
+        from tako_vm.cli import dev_status
+
+        args = argparse.Namespace()
+        with patch(
+            "tako_vm.cli.subprocess.run",
+            side_effect=subprocess.CalledProcessError(
+                1, ["docker", "info"], stderr="Cannot connect to the Docker daemon"
+            ),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                dev_status(args)
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert "Status: docker unavailable" in captured.out

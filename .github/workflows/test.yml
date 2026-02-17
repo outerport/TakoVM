@@ -8,6 +8,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tako_vm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tako_vm_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     strategy:
       fail-fast: false
       matrix:
@@ -31,11 +45,30 @@ jobs:
       - name: Build executor image
         run: docker build -t code-executor:latest -f docker/Dockerfile.executor .
 
+      - name: Wait for PostgreSQL
+        run: |
+          python - <<'PY'
+          import time
+          import psycopg
+
+          dsn = "postgresql://postgres:postgres@localhost:5432/tako_vm_test"
+          for _ in range(30):
+              try:
+                  with psycopg.connect(dsn):
+                      print("PostgreSQL is ready")
+                      break
+              except Exception:
+                  time.sleep(2)
+          else:
+              raise SystemExit("PostgreSQL failed to become ready")
+          PY
+
       - name: Run tests with coverage
         env:
           TAKO_VM_SECURITY_MODE: permissive
           TAKO_VM_ENABLE_CAP_RESTRICTIONS: "false"  # GitHub Actions Docker can't modify capability bounding sets
           TAKO_VM_ENABLE_SECCOMP: "false"  # Custom seccomp profiles block container init in GitHub Actions
+          TAKO_VM_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tako_vm_test
         run: |
           pytest tests/ -v --timeout=120 \
             --cov=tako_vm \

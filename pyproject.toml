@@ -34,10 +34,12 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-# Minimal dependencies for SDK client only
+# Core dependencies
 dependencies = [
     "requests>=2.31.0",
     "pydantic>=2.0.0",
+    "psycopg[binary]>=3.2.0",
+    "psycopg-pool>=3.2.0",
 ]
 
 [project.optional-dependencies]
@@ -105,4 +107,10 @@ markers = [
     "requires_host_mounts: tests that require mounting host paths (skip in VM environments)",
     "requires_gvisor: tests that require gVisor runtime",
     "slow: marks tests as slow",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "pyright>=1.1.408",
 ]

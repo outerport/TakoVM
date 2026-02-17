@@ -1,16 +1,17 @@
 """
-SQLite storage for Tako VM execution records.
+PostgreSQL storage for Tako VM execution records.
 
 Provides async CRUD operations for ExecutionRecords and JobVersions.
 """
 
-import json
+import asyncio
 import logging
-import sqlite3
-import threading
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Mapping, Optional, cast
+
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+from psycopg_pool import AsyncConnectionPool
 
 from .models import (
     Artifact,
@@ -25,219 +26,286 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+MIGRATION_LOCK_ID = 94857231
+RowMapping = Mapping[str, Any]
 
-# SQLite schema
-SCHEMA_SQL = """
--- Execution records table (v2 with SVG/artifact support)
-CREATE TABLE IF NOT EXISTS execution_records (
-    execution_id TEXT PRIMARY KEY,
-    status TEXT NOT NULL,
-    job_type TEXT NOT NULL,
-    job_ref TEXT NOT NULL DEFAULT 'default@latest',
 
-    created_at TEXT NOT NULL,
-    queued_at TEXT NOT NULL,
-    dequeued_at TEXT,
-    started_at TEXT,
-    ended_at TEXT,
-    duration_ms INTEGER,
+MIGRATIONS: list[tuple[str, str]] = [
+    (
+        "0001_initial",
+        """
+        CREATE TABLE IF NOT EXISTS execution_records (
+            execution_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            job_type TEXT NOT NULL,
+            job_ref TEXT NOT NULL DEFAULT 'default@latest',
 
-    attempt INTEGER DEFAULT 0,
-    max_attempts INTEGER DEFAULT 1,
-    worker_id TEXT,
-    idempotency_key TEXT,
-    idempotency_fingerprint TEXT,
+            created_at TIMESTAMPTZ NOT NULL,
+            queued_at TIMESTAMPTZ NOT NULL,
+            dequeued_at TIMESTAMPTZ,
+            started_at TIMESTAMPTZ,
+            ended_at TIMESTAMPTZ,
+            duration_ms INTEGER,
 
-    code_hash TEXT NOT NULL,
-    input_hash TEXT NOT NULL,
-    params_hash TEXT,
-    input_artifacts_hash TEXT,
+            attempt INTEGER DEFAULT 0,
+            max_attempts INTEGER DEFAULT 1,
+            worker_id TEXT,
+            idempotency_key TEXT,
+            idempotency_fingerprint TEXT,
 
-    input_artifacts_json TEXT,
+            code_hash TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            params_hash TEXT,
+            input_artifacts_hash TEXT,
 
-    exit_code INTEGER,
-    stdout TEXT,
-    stderr TEXT,
-    stdout_truncated INTEGER DEFAULT 0,
-    stderr_truncated INTEGER DEFAULT 0,
-    result_json TEXT,
+            input_artifacts_json JSONB,
 
-    max_rss_mb REAL,
-    cpu_time_ms INTEGER,
-    wall_time_ms INTEGER,
+            exit_code INTEGER,
+            stdout TEXT,
+            stderr TEXT,
+            stdout_truncated BOOLEAN DEFAULT FALSE,
+            stderr_truncated BOOLEAN DEFAULT FALSE,
+            result_json JSONB,
 
-    timing_json TEXT,
+            max_rss_mb DOUBLE PRECISION,
+            cpu_time_ms INTEGER,
+            wall_time_ms INTEGER,
 
-    artifacts_json TEXT,
-    error_json TEXT,
+            timing_json JSONB,
 
-    client_ip TEXT,
-    parent_execution_id TEXT,
-    relationship TEXT
-);
+            artifacts_json JSONB,
+            error_json JSONB,
 
--- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_execution_status ON execution_records(status);
-CREATE INDEX IF NOT EXISTS idx_execution_job_type ON execution_records(job_type);
-CREATE INDEX IF NOT EXISTS idx_execution_created_at ON execution_records(created_at);
-CREATE INDEX IF NOT EXISTS idx_execution_idempotency ON execution_records(idempotency_key);
-CREATE INDEX IF NOT EXISTS idx_execution_parent ON execution_records(parent_execution_id);
+            client_ip TEXT,
+            parent_execution_id TEXT,
+            relationship TEXT
+        );
 
--- Composite indexes for filtered pagination queries (scalability fix)
-CREATE INDEX IF NOT EXISTS idx_execution_status_created ON execution_records(status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_execution_job_type_created ON execution_records(job_type, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_execution_status_job_type_created ON execution_records(status, job_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_execution_status ON execution_records(status);
+        CREATE INDEX IF NOT EXISTS idx_execution_job_type ON execution_records(job_type);
+        CREATE INDEX IF NOT EXISTS idx_execution_created_at ON execution_records(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_execution_parent ON execution_records(parent_execution_id);
 
--- Job versions table
-CREATE TABLE IF NOT EXISTS job_versions (
-    digest TEXT PRIMARY KEY,
-    job_type_name TEXT NOT NULL,
-    version_tag TEXT,
+        CREATE INDEX IF NOT EXISTS idx_execution_status_created
+            ON execution_records(status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_execution_job_type_created
+            ON execution_records(job_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_execution_status_job_type_created
+            ON execution_records(status, job_type, created_at DESC);
 
-    built_at TEXT NOT NULL,
-    built_by TEXT,
-    dockerfile_hash TEXT NOT NULL,
-    requirements_hash TEXT NOT NULL,
-    image_ref TEXT NOT NULL
-);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_idempotency_unique
+            ON execution_records(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_version_job_type ON job_versions(job_type_name);
-CREATE INDEX IF NOT EXISTS idx_version_tag ON job_versions(job_type_name, version_tag);
+        CREATE TABLE IF NOT EXISTS job_versions (
+            digest TEXT PRIMARY KEY,
+            job_type_name TEXT NOT NULL,
+            version_tag TEXT,
 
--- Dead letter queue for failed jobs
-CREATE TABLE IF NOT EXISTS dead_letter_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id TEXT NOT NULL,
-    job_data_json TEXT NOT NULL,
-    error_type TEXT NOT NULL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL,
-    client_ip TEXT,
-    correlation_id TEXT
-);
+            built_at TIMESTAMPTZ NOT NULL,
+            built_by TEXT,
+            dockerfile_hash TEXT NOT NULL,
+            requirements_hash TEXT NOT NULL,
+            image_ref TEXT NOT NULL
+        );
 
-CREATE INDEX IF NOT EXISTS idx_dlq_created_at ON dead_letter_queue(created_at);
-CREATE INDEX IF NOT EXISTS idx_dlq_error_type ON dead_letter_queue(error_type);
-CREATE INDEX IF NOT EXISTS idx_dlq_job_id ON dead_letter_queue(job_id);
-"""
+        CREATE INDEX IF NOT EXISTS idx_version_job_type ON job_versions(job_type_name);
+        CREATE INDEX IF NOT EXISTS idx_version_tag ON job_versions(job_type_name, version_tag);
+        CREATE INDEX IF NOT EXISTS idx_version_job_type_built_at
+            ON job_versions(job_type_name, built_at DESC);
 
-# Migration: Add timing_json column if it doesn't exist (for existing databases)
-MIGRATION_TIMING_SQL = """
-ALTER TABLE execution_records ADD COLUMN timing_json TEXT;
-"""
+        CREATE TABLE IF NOT EXISTS dead_letter_queue (
+            id BIGSERIAL PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            job_data_json JSONB NOT NULL,
+            error_type TEXT NOT NULL,
+            error_message TEXT,
+            retry_count INTEGER DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL,
+            client_ip TEXT,
+            correlation_id TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_dlq_created_at ON dead_letter_queue(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_dlq_error_type ON dead_letter_queue(error_type);
+        CREATE INDEX IF NOT EXISTS idx_dlq_job_id ON dead_letter_queue(job_id);
+        """,
+    )
+]
+
+
+def _decode_json_field(value: Any) -> Any:
+    """Normalize JSONB values returned by psycopg."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    return value
 
 
 class ExecutionStorage:
-    """
-    SQLite storage for execution records.
+    """PostgreSQL storage for execution records."""
 
-    Provides synchronous operations (use run_in_executor for async).
-    """
+    def __init__(self, database_url: str, min_pool_size: int = 1, max_pool_size: int = 10):
+        self.database_url = database_url
+        self.min_pool_size = min_pool_size
+        self.max_pool_size = max_pool_size
+        self._pool: Optional[AsyncConnectionPool] = None
 
-    def __init__(self, db_path: Path):
-        """
-        Initialize storage.
+    async def init(self) -> None:
+        """Initialize connection pool and run schema migrations."""
+        if self._pool is not None:
+            return
 
-        Args:
-            db_path: Path to SQLite database file
-        """
-        self.db_path = db_path
-        self._conn: Optional[sqlite3.Connection] = None
-        self._lock = threading.Lock()  # Thread safety for SQLite access
-
-    def init(self) -> None:
-        """Create database and tables if they don't exist."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = None
+        pool: AsyncConnectionPool = AsyncConnectionPool(
+            conninfo=self.database_url,
+            min_size=self.min_pool_size,
+            max_size=self.max_pool_size,
+            open=False,
+            kwargs={"row_factory": dict_row},
+        )
+        await pool.open(wait=True, timeout=10.0)
         try:
-            conn = self._get_connection()
-            conn.executescript(SCHEMA_SQL)
-            conn.commit()
-
-            # Run migrations for existing databases
-            self._run_migrations(conn)
+            await self._run_migrations(pool)
         except Exception:
-            # Close connection on error to prevent leaks
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                self._conn = None
+            await pool.close()
             raise
 
-    def _run_migrations(self, conn: sqlite3.Connection) -> None:
-        """Run database migrations for schema updates."""
-        # Check if timing_json column exists
-        cursor = conn.execute("PRAGMA table_info(execution_records)")
-        columns = {row["name"] for row in cursor.fetchall()}
+        self._pool = pool
 
-        if "timing_json" not in columns:
+    async def close(self) -> None:
+        """Close connection pool."""
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+
+    def _get_pool(self) -> AsyncConnectionPool:
+        if self._pool is None:
+            raise RuntimeError("ExecutionStorage not initialized")
+        return self._pool
+
+    async def _run_migrations(self, pool) -> None:
+        async with pool.connection() as conn:
+            lock_acquired = False
+            for _ in range(300):
+                cursor = await conn.execute(
+                    "SELECT pg_try_advisory_lock(%s) AS locked", (MIGRATION_LOCK_ID,)
+                )
+                row = await cursor.fetchone()
+                if row and row.get("locked"):
+                    lock_acquired = True
+                    break
+                await asyncio.sleep(0.1)
+
+            if not lock_acquired:
+                raise TimeoutError("Timed out acquiring migration advisory lock")
+
             try:
-                conn.execute(MIGRATION_TIMING_SQL)
-                conn.commit()
-                logger.info("Migration: Added timing_json column to execution_records")
-            except sqlite3.OperationalError as e:
-                # Column might already exist if migration ran partially
-                if "duplicate column" not in str(e).lower():
-                    raise
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version TEXT PRIMARY KEY,
+                        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Get or create database connection."""
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
-            self._conn.row_factory = sqlite3.Row
-        return self._conn
+                for version, sql in MIGRATIONS:
+                    async with conn.transaction():
+                        cursor = await conn.execute(
+                            """
+                            INSERT INTO schema_migrations (version)
+                            VALUES (%s)
+                            ON CONFLICT (version) DO NOTHING
+                            RETURNING version
+                            """,
+                            (version,),
+                        )
+                        inserted = await cursor.fetchone()
+                        if not inserted:
+                            continue
 
-    def close(self) -> None:
-        """Close database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+                        await conn.execute(sql)
+                        logger.info("Applied database migration %s", version)
+            finally:
+                await conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_ID,))
 
-    def save_record(self, record: ExecutionRecord) -> None:
-        """
-        Insert or update execution record.
-
-        Args:
-            record: ExecutionRecord to save
-        """
-        # Serialize complex fields outside the lock
+    async def save_record(self, record: ExecutionRecord) -> None:
+        """Insert or update execution record."""
         resource_usage = record.resource_usage
-        artifacts_json = json.dumps([a.model_dump() for a in record.artifacts])
-        input_artifacts_json = json.dumps([a.model_dump() for a in record.input_artifacts])
-        error_json = json.dumps(record.error.model_dump()) if record.error else None
-        result_json = json.dumps(record.result_json) if record.result_json else None
-        timing_json = json.dumps(record.timing.model_dump()) if record.timing else None
+        artifacts_json = [a.model_dump() for a in record.artifacts]
+        input_artifacts_json = [a.model_dump() for a in record.input_artifacts]
+        error_json = record.error.model_dump() if record.error else None
+        result_json = record.result_json
+        timing_json = record.timing.model_dump() if record.timing else None
 
-        with self._lock:
-            conn = self._get_connection()
-            conn.execute(
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            await conn.execute(
                 """
-            INSERT OR REPLACE INTO execution_records (
-                execution_id, status, job_type, job_ref,
-                created_at, queued_at, dequeued_at, started_at, ended_at, duration_ms,
-                attempt, max_attempts, worker_id, idempotency_key, idempotency_fingerprint,
-                code_hash, input_hash, params_hash, input_artifacts_hash,
-                input_artifacts_json,
-                exit_code, stdout, stderr, stdout_truncated, stderr_truncated, result_json,
-                max_rss_mb, cpu_time_ms, wall_time_ms,
-                timing_json,
-                artifacts_json, error_json,
-                client_ip, parent_execution_id, relationship
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+                INSERT INTO execution_records (
+                    execution_id, status, job_type, job_ref,
+                    created_at, queued_at, dequeued_at, started_at, ended_at, duration_ms,
+                    attempt, max_attempts, worker_id, idempotency_key, idempotency_fingerprint,
+                    code_hash, input_hash, params_hash, input_artifacts_hash,
+                    input_artifacts_json,
+                    exit_code, stdout, stderr, stdout_truncated, stderr_truncated, result_json,
+                    max_rss_mb, cpu_time_ms, wall_time_ms,
+                    timing_json,
+                    artifacts_json, error_json,
+                    client_ip, parent_execution_id, relationship
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (execution_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    job_type = EXCLUDED.job_type,
+                    job_ref = EXCLUDED.job_ref,
+                    created_at = EXCLUDED.created_at,
+                    queued_at = EXCLUDED.queued_at,
+                    dequeued_at = EXCLUDED.dequeued_at,
+                    started_at = EXCLUDED.started_at,
+                    ended_at = EXCLUDED.ended_at,
+                    duration_ms = EXCLUDED.duration_ms,
+                    attempt = EXCLUDED.attempt,
+                    max_attempts = EXCLUDED.max_attempts,
+                    worker_id = EXCLUDED.worker_id,
+                    idempotency_key = EXCLUDED.idempotency_key,
+                    idempotency_fingerprint = EXCLUDED.idempotency_fingerprint,
+                    code_hash = EXCLUDED.code_hash,
+                    input_hash = EXCLUDED.input_hash,
+                    params_hash = EXCLUDED.params_hash,
+                    input_artifacts_hash = EXCLUDED.input_artifacts_hash,
+                    input_artifacts_json = EXCLUDED.input_artifacts_json,
+                    exit_code = EXCLUDED.exit_code,
+                    stdout = EXCLUDED.stdout,
+                    stderr = EXCLUDED.stderr,
+                    stdout_truncated = EXCLUDED.stdout_truncated,
+                    stderr_truncated = EXCLUDED.stderr_truncated,
+                    result_json = EXCLUDED.result_json,
+                    max_rss_mb = EXCLUDED.max_rss_mb,
+                    cpu_time_ms = EXCLUDED.cpu_time_ms,
+                    wall_time_ms = EXCLUDED.wall_time_ms,
+                    timing_json = EXCLUDED.timing_json,
+                    artifacts_json = EXCLUDED.artifacts_json,
+                    error_json = EXCLUDED.error_json,
+                    client_ip = EXCLUDED.client_ip,
+                    parent_execution_id = EXCLUDED.parent_execution_id,
+                    relationship = EXCLUDED.relationship
+                """,
                 (
                     record.execution_id,
                     record.status,
                     record.job_type,
                     record.job_ref,
-                    record.created_at.isoformat(),
-                    record.queued_at.isoformat(),
-                    record.dequeued_at.isoformat() if record.dequeued_at else None,
-                    record.started_at.isoformat() if record.started_at else None,
-                    record.ended_at.isoformat() if record.ended_at else None,
+                    record.created_at,
+                    record.queued_at,
+                    record.dequeued_at,
+                    record.started_at,
+                    record.ended_at,
                     record.duration_ms,
                     record.attempt,
                     record.max_attempts,
@@ -248,496 +316,414 @@ class ExecutionStorage:
                     record.input_hash,
                     record.params_hash,
                     record.input_artifacts_hash,
-                    input_artifacts_json,
+                    Jsonb(input_artifacts_json),
                     record.exit_code,
                     record.stdout,
                     record.stderr,
-                    1 if record.stdout_truncated else 0,
-                    1 if record.stderr_truncated else 0,
-                    result_json,
+                    record.stdout_truncated,
+                    record.stderr_truncated,
+                    Jsonb(result_json) if result_json is not None else None,
                     resource_usage.max_rss_mb if resource_usage else None,
                     resource_usage.cpu_time_ms if resource_usage else None,
                     resource_usage.wall_time_ms if resource_usage else None,
-                    timing_json,
-                    artifacts_json,
-                    error_json,
+                    Jsonb(timing_json) if timing_json is not None else None,
+                    Jsonb(artifacts_json),
+                    Jsonb(error_json) if error_json is not None else None,
                     record.client_ip,
                     record.parent_execution_id,
                     record.relationship,
                 ),
             )
-            conn.commit()
 
-    def get_record(self, execution_id: str) -> Optional[ExecutionRecord]:
-        """
-        Retrieve execution record by ID.
-
-        Args:
-            execution_id: Execution ID to look up
-
-        Returns:
-            ExecutionRecord or None if not found
-        """
-        with self._lock:
-            conn = self._get_connection()
-            row = conn.execute(
-                "SELECT * FROM execution_records WHERE execution_id = ?", (execution_id,)
-            ).fetchone()
+    async def get_record(self, execution_id: str) -> Optional[ExecutionRecord]:
+        """Retrieve execution record by ID."""
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM execution_records WHERE execution_id = %s", (execution_id,)
+            )
+            row = await cursor.fetchone()
 
         if not row:
             return None
+        return self._row_to_record(cast(RowMapping, row))
 
-        return self._row_to_record(row)
-
-    def get_by_idempotency_key(self, key: str) -> Optional[ExecutionRecord]:
-        """
-        Retrieve execution record by idempotency key.
-
-        Args:
-            key: Idempotency key
-
-        Returns:
-            ExecutionRecord or None if not found
-        """
-        with self._lock:
-            conn = self._get_connection()
-            row = conn.execute(
-                "SELECT * FROM execution_records WHERE idempotency_key = ?", (key,)
-            ).fetchone()
+    async def get_by_idempotency_key(self, key: str) -> Optional[ExecutionRecord]:
+        """Retrieve execution record by idempotency key."""
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM execution_records WHERE idempotency_key = %s", (key,)
+            )
+            row = await cursor.fetchone()
 
         if not row:
             return None
+        return self._row_to_record(cast(RowMapping, row))
 
-        return self._row_to_record(row)
-
-    def list_records(
+    async def list_records(
         self,
         status: Optional[str] = None,
         job_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ExecutionRecord]:
-        """
-        List execution records with optional filters.
-
-        Args:
-            status: Filter by status
-            job_type: Filter by job type
-            limit: Maximum records to return
-            offset: Offset for pagination
-
-        Returns:
-            List of ExecutionRecords
-        """
+        """List execution records with optional filters."""
         query = "SELECT * FROM execution_records WHERE 1=1"
-        params: List = []
+        params: List[Any] = []
 
         if status:
-            query += " AND status = ?"
+            query += " AND status = %s"
             params.append(status)
 
         if job_type:
-            query += " AND job_type = ?"
+            query += " AND job_type = %s"
             params.append(job_type)
 
-        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
-        with self._lock:
-            conn = self._get_connection()
-            rows = conn.execute(query, params).fetchall()
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
 
-        return [self._row_to_record(row) for row in rows]
+        return [self._row_to_record(cast(RowMapping, row)) for row in rows]
 
-    def cleanup_old_records(self, ttl_days: int) -> int:
-        """
-        Delete records older than TTL.
+    async def cleanup_old_records(self, ttl_days: int) -> int:
+        """Delete records older than TTL."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
 
-        Args:
-            ttl_days: Days to retain records
-
-        Returns:
-            Number of records deleted
-        """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl_days)).isoformat()
-
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.execute("DELETE FROM execution_records WHERE created_at < ?", (cutoff,))
-            conn.commit()
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM execution_records WHERE created_at < %s", (cutoff,)
+            )
             return cursor.rowcount
 
-    def _row_to_record(self, row: sqlite3.Row) -> ExecutionRecord:
+    def _row_to_record(self, row: RowMapping) -> ExecutionRecord:
         """Convert database row to ExecutionRecord."""
-        # Parse resource usage
         resource_usage = None
-        if row["wall_time_ms"] is not None:
+        if row.get("wall_time_ms") is not None:
             resource_usage = ResourceUsage(
-                max_rss_mb=row["max_rss_mb"],
-                cpu_time_ms=row["cpu_time_ms"],
-                wall_time_ms=row["wall_time_ms"],
+                max_rss_mb=row.get("max_rss_mb"),
+                cpu_time_ms=row.get("cpu_time_ms"),
+                wall_time_ms=row.get("wall_time_ms"),
             )
 
-        # Parse input artifacts with error handling
         input_artifacts = []
-        input_artifacts_json = (
-            row["input_artifacts_json"] if "input_artifacts_json" in row.keys() else None
-        )
-        if input_artifacts_json:
+        input_artifacts_data = _decode_json_field(row.get("input_artifacts_json"))
+        if input_artifacts_data:
             try:
-                input_artifacts_data = json.loads(input_artifacts_json)
                 input_artifacts = [InputArtifact(**a) for a in input_artifacts_data]
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
+            except (TypeError, ValueError) as e:
                 logger.warning(
                     "Failed to parse input_artifacts_json for %s: %s", row["execution_id"], e
                 )
 
-        # Parse output artifacts with error handling
         artifacts = []
-        if row["artifacts_json"]:
+        artifacts_data = _decode_json_field(row.get("artifacts_json"))
+        if artifacts_data:
             try:
-                artifacts_data = json.loads(row["artifacts_json"])
                 artifacts = [Artifact(**a) for a in artifacts_data]
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
+            except (TypeError, ValueError) as e:
                 logger.warning("Failed to parse artifacts_json for %s: %s", row["execution_id"], e)
 
-        # Parse error with error handling
         error = None
-        if row["error_json"]:
+        error_data = _decode_json_field(row.get("error_json"))
+        if error_data:
             try:
-                error_data = json.loads(row["error_json"])
                 error = ExecutionError(**error_data)
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
+            except (TypeError, ValueError) as e:
                 logger.warning("Failed to parse error_json for %s: %s", row["execution_id"], e)
 
-        # Parse result_json with error handling
-        result_json = None
-        result_json_col = (
-            row["result_json"] if "result_json" in row.keys() else row.get("output_json")
-        )
-        if result_json_col:
-            try:
-                result_json = json.loads(result_json_col)
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.warning("Failed to parse result_json for %s: %s", row["execution_id"], e)
+        result_json = _decode_json_field(row.get("result_json"))
 
-        # Parse timing with error handling
         timing = None
-        timing_json_col = row["timing_json"] if "timing_json" in row.keys() else None
-        if timing_json_col:
+        timing_data = _decode_json_field(row.get("timing_json"))
+        if timing_data:
             try:
-                timing_data = json.loads(timing_json_col)
                 timing = ExecutionTiming(**timing_data)
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
+            except (TypeError, ValueError) as e:
                 logger.warning("Failed to parse timing_json for %s: %s", row["execution_id"], e)
-
-        # Handle optional new columns with defaults
-        job_ref = row["job_ref"] if "job_ref" in row.keys() else f"{row['job_type']}@latest"
-        queued_at_str = row["queued_at"] if "queued_at" in row.keys() else row["created_at"]
-        dequeued_at_str = row["dequeued_at"] if "dequeued_at" in row.keys() else None
 
         return ExecutionRecord(
             execution_id=row["execution_id"],
             status=row["status"],
             job_type=row["job_type"],
-            job_ref=job_ref,
-            created_at=datetime.fromisoformat(row["created_at"]),
-            queued_at=datetime.fromisoformat(queued_at_str),
-            dequeued_at=datetime.fromisoformat(dequeued_at_str) if dequeued_at_str else None,
-            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
-            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
-            duration_ms=row["duration_ms"],
-            attempt=row["attempt"] if "attempt" in row.keys() else 0,
-            max_attempts=row["max_attempts"] if "max_attempts" in row.keys() else 1,
-            worker_id=row["worker_id"] if "worker_id" in row.keys() else None,
-            idempotency_key=row["idempotency_key"] if "idempotency_key" in row.keys() else None,
-            idempotency_fingerprint=row["idempotency_fingerprint"]
-            if "idempotency_fingerprint" in row.keys()
-            else None,
+            job_ref=row["job_ref"],
+            created_at=row["created_at"],
+            queued_at=row["queued_at"],
+            dequeued_at=row.get("dequeued_at"),
+            started_at=row.get("started_at"),
+            ended_at=row.get("ended_at"),
+            duration_ms=row.get("duration_ms"),
+            attempt=row.get("attempt", 0),
+            max_attempts=row.get("max_attempts", 1),
+            worker_id=row.get("worker_id"),
+            idempotency_key=row.get("idempotency_key"),
+            idempotency_fingerprint=row.get("idempotency_fingerprint"),
             code_hash=row["code_hash"],
             input_hash=row["input_hash"],
-            params_hash=row["params_hash"] if "params_hash" in row.keys() else "",
-            input_artifacts_hash=row["input_artifacts_hash"]
-            if "input_artifacts_hash" in row.keys()
-            else "",
+            params_hash=row.get("params_hash") or "",
+            input_artifacts_hash=row.get("input_artifacts_hash") or "",
             input_artifacts=input_artifacts,
-            exit_code=row["exit_code"],
-            stdout=row["stdout"] or "",
-            stderr=row["stderr"] or "",
-            stdout_truncated=bool(row["stdout_truncated"])
-            if "stdout_truncated" in row.keys()
-            else False,
-            stderr_truncated=bool(row["stderr_truncated"])
-            if "stderr_truncated" in row.keys()
-            else False,
+            exit_code=row.get("exit_code"),
+            stdout=row.get("stdout") or "",
+            stderr=row.get("stderr") or "",
+            stdout_truncated=bool(row.get("stdout_truncated", False)),
+            stderr_truncated=bool(row.get("stderr_truncated", False)),
             result_json=result_json,
             resource_usage=resource_usage,
             timing=timing,
             artifacts=artifacts,
             error=error,
-            client_ip=row["client_ip"],
-            parent_execution_id=row["parent_execution_id"]
-            if "parent_execution_id" in row.keys()
-            else None,
-            relationship=row["relationship"] if "relationship" in row.keys() else None,
+            client_ip=row.get("client_ip"),
+            parent_execution_id=row.get("parent_execution_id"),
+            relationship=row.get("relationship"),
         )
 
-    # Job version methods
-
-    def save_version(self, version: JobVersion) -> None:
+    async def save_version(self, version: JobVersion) -> None:
         """Save job version record."""
-        with self._lock:
-            conn = self._get_connection()
-            conn.execute(
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            await conn.execute(
                 """
-                INSERT OR REPLACE INTO job_versions (
+                INSERT INTO job_versions (
                     digest, job_type_name, version_tag,
                     built_at, built_by, dockerfile_hash,
                     requirements_hash, image_ref
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (digest) DO UPDATE SET
+                    job_type_name = EXCLUDED.job_type_name,
+                    version_tag = EXCLUDED.version_tag,
+                    built_at = EXCLUDED.built_at,
+                    built_by = EXCLUDED.built_by,
+                    dockerfile_hash = EXCLUDED.dockerfile_hash,
+                    requirements_hash = EXCLUDED.requirements_hash,
+                    image_ref = EXCLUDED.image_ref
+                """,
                 (
                     version.digest,
                     version.job_type_name,
                     version.version_tag,
-                    version.built_at.isoformat(),
+                    version.built_at,
                     version.built_by,
                     version.dockerfile_hash,
                     version.requirements_hash,
                     version.image_ref,
                 ),
             )
-            conn.commit()
 
-    def get_version_by_digest(self, job_type_name: str, digest: str) -> Optional[JobVersion]:
+    async def get_version_by_digest(self, job_type_name: str, digest: str) -> Optional[JobVersion]:
         """Get version by digest."""
-        with self._lock:
-            conn = self._get_connection()
-
-            # Handle short digests
+        pool = self._get_pool()
+        async with pool.connection() as conn:
             if len(digest) < 64:
-                row = conn.execute(
-                    "SELECT * FROM job_versions WHERE job_type_name = ? AND digest LIKE ?",
+                cursor = await conn.execute(
+                    """
+                    SELECT * FROM job_versions
+                    WHERE job_type_name = %s AND digest LIKE %s
+                    ORDER BY built_at DESC
+                    LIMIT 1
+                    """,
                     (job_type_name, digest + "%"),
-                ).fetchone()
+                )
             else:
-                row = conn.execute(
-                    "SELECT * FROM job_versions WHERE digest = ?", (digest,)
-                ).fetchone()
+                cursor = await conn.execute(
+                    "SELECT * FROM job_versions WHERE job_type_name = %s AND digest = %s",
+                    (job_type_name, digest),
+                )
+            row = await cursor.fetchone()
 
         if not row:
             return None
+        return self._row_to_version(cast(RowMapping, row))
 
-        return self._row_to_version(row)
-
-    def get_version_by_tag(self, job_type_name: str, version_tag: str) -> Optional[JobVersion]:
+    async def get_version_by_tag(
+        self, job_type_name: str, version_tag: str
+    ) -> Optional[JobVersion]:
         """Get version by tag."""
-        with self._lock:
-            conn = self._get_connection()
-            row = conn.execute(
-                "SELECT * FROM job_versions WHERE job_type_name = ? AND version_tag = ?",
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM job_versions WHERE job_type_name = %s AND version_tag = %s",
                 (job_type_name, version_tag),
-            ).fetchone()
+            )
+            row = await cursor.fetchone()
 
         if not row:
             return None
+        return self._row_to_version(cast(RowMapping, row))
 
-        return self._row_to_version(row)
-
-    def get_latest_version(self, job_type_name: str) -> Optional[JobVersion]:
+    async def get_latest_version(self, job_type_name: str) -> Optional[JobVersion]:
         """Get most recent version for job type."""
-        with self._lock:
-            conn = self._get_connection()
-            row = conn.execute(
-                "SELECT * FROM job_versions WHERE job_type_name = ? ORDER BY built_at DESC LIMIT 1",
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM job_versions
+                WHERE job_type_name = %s
+                ORDER BY built_at DESC
+                LIMIT 1
+                """,
                 (job_type_name,),
-            ).fetchone()
+            )
+            row = await cursor.fetchone()
 
         if not row:
             return None
+        return self._row_to_version(cast(RowMapping, row))
 
-        return self._row_to_version(row)
-
-    def list_versions(self, job_type_name: str) -> List[JobVersion]:
+    async def list_versions(self, job_type_name: str) -> List[JobVersion]:
         """List all versions for job type."""
-        with self._lock:
-            conn = self._get_connection()
-            rows = conn.execute(
-                "SELECT * FROM job_versions WHERE job_type_name = ? ORDER BY built_at DESC",
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM job_versions
+                WHERE job_type_name = %s
+                ORDER BY built_at DESC
+                """,
                 (job_type_name,),
-            ).fetchall()
+            )
+            rows = await cursor.fetchall()
 
-        return [self._row_to_version(row) for row in rows]
+        return [self._row_to_version(cast(RowMapping, row)) for row in rows]
 
-    def _row_to_version(self, row: sqlite3.Row) -> JobVersion:
+    def _row_to_version(self, row: RowMapping) -> JobVersion:
         """Convert database row to JobVersion."""
         return JobVersion(
             digest=row["digest"],
             job_type_name=row["job_type_name"],
-            version_tag=row["version_tag"],
-            built_at=datetime.fromisoformat(row["built_at"]),
-            built_by=row["built_by"],
+            version_tag=row.get("version_tag"),
+            built_at=row["built_at"],
+            built_by=row.get("built_by"),
             dockerfile_hash=row["dockerfile_hash"],
             requirements_hash=row["requirements_hash"],
             image_ref=row["image_ref"],
         )
 
-    # Dead letter queue methods
-
-    def add_to_dlq(self, entry: DeadLetterEntry) -> int:
-        """
-        Add a failed job to the dead letter queue.
-
-        Args:
-            entry: DeadLetterEntry with job details
-
-        Returns:
-            ID of the inserted entry
-        """
-        job_data_json = json.dumps(entry.job_data)
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.execute(
+    async def add_to_dlq(self, entry: DeadLetterEntry) -> int:
+        """Add a failed job to the dead letter queue."""
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
                 """
                 INSERT INTO dead_letter_queue (
                     job_id, job_data_json, error_type, error_message,
                     retry_count, created_at, client_ip, correlation_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
                 (
                     entry.job_id,
-                    job_data_json,
+                    Jsonb(entry.job_data),
                     entry.error_type,
                     entry.error_message,
                     entry.retry_count,
-                    entry.created_at.isoformat(),
+                    entry.created_at,
                     entry.client_ip,
                     entry.correlation_id,
                 ),
             )
-            conn.commit()
-            return cursor.lastrowid or 0
+            row = await cursor.fetchone()
+            row_map = cast(RowMapping, row) if row else None
+            return int(row_map["id"]) if row_map else 0
 
-    def get_dlq_entry(self, entry_id: int) -> Optional[DeadLetterEntry]:
+    async def get_dlq_entry(self, entry_id: int) -> Optional[DeadLetterEntry]:
         """Get a DLQ entry by ID."""
-        with self._lock:
-            conn = self._get_connection()
-            row = conn.execute(
-                "SELECT * FROM dead_letter_queue WHERE id = ?", (entry_id,)
-            ).fetchone()
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM dead_letter_queue WHERE id = %s", (entry_id,)
+            )
+            row = await cursor.fetchone()
 
         if not row:
             return None
+        return self._row_to_dlq_entry(cast(RowMapping, row))
 
-        return self._row_to_dlq_entry(row)
-
-    def list_dlq_entries(
+    async def list_dlq_entries(
         self, error_type: Optional[str] = None, limit: int = 100, offset: int = 0
     ) -> List[DeadLetterEntry]:
-        """
-        List dead letter queue entries.
-
-        Args:
-            error_type: Filter by error type
-            limit: Maximum entries to return
-            offset: Offset for pagination
-
-        Returns:
-            List of DeadLetterEntry objects
-        """
+        """List dead letter queue entries."""
         query = "SELECT * FROM dead_letter_queue WHERE 1=1"
-        params: List = []
+        params: List[Any] = []
 
         if error_type:
-            query += " AND error_type = ?"
+            query += " AND error_type = %s"
             params.append(error_type)
 
-        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
-        with self._lock:
-            conn = self._get_connection()
-            rows = conn.execute(query, params).fetchall()
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
 
-        return [self._row_to_dlq_entry(row) for row in rows]
+        return [self._row_to_dlq_entry(cast(RowMapping, row)) for row in rows]
 
-    def remove_from_dlq(self, entry_id: int) -> bool:
-        """
-        Remove an entry from the dead letter queue.
+    async def remove_from_dlq(self, entry_id: int) -> bool:
+        """Remove an entry from the dead letter queue."""
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM dead_letter_queue WHERE id = %s RETURNING id", (entry_id,)
+            )
+            row = await cursor.fetchone()
+            return row is not None
 
-        Args:
-            entry_id: ID of entry to remove
+    async def get_dlq_stats(self) -> dict:
+        """Get statistics about the dead letter queue."""
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            total_cursor = await conn.execute("SELECT COUNT(*) AS count FROM dead_letter_queue")
+            total_row = await total_cursor.fetchone()
+            total_row_map = cast(RowMapping, total_row) if total_row else None
+            total = int(total_row_map["count"]) if total_row_map else 0
 
-        Returns:
-            True if entry was removed
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.execute("DELETE FROM dead_letter_queue WHERE id = ?", (entry_id,))
-            conn.commit()
-            return cursor.rowcount > 0
-
-    def get_dlq_stats(self) -> dict:
-        """
-        Get statistics about the dead letter queue.
-
-        Returns:
-            Dict with count, error_type breakdown, etc.
-        """
-        with self._lock:
-            conn = self._get_connection()
-
-            total = conn.execute("SELECT COUNT(*) as count FROM dead_letter_queue").fetchone()[
-                "count"
-            ]
-
-            by_error = conn.execute("""
-                SELECT error_type, COUNT(*) as count
+            by_error_cursor = await conn.execute(
+                """
+                SELECT error_type, COUNT(*) AS count
                 FROM dead_letter_queue
                 GROUP BY error_type
                 ORDER BY count DESC
-            """).fetchall()
+                """
+            )
+            by_error_rows = await by_error_cursor.fetchall()
 
         return {
             "total": total,
-            "by_error_type": {row["error_type"]: row["count"] for row in by_error},
+            "by_error_type": {
+                cast(str, cast(RowMapping, row)["error_type"]): int(cast(RowMapping, row)["count"])
+                for row in by_error_rows
+            },
         }
 
-    def cleanup_old_dlq_entries(self, ttl_days: int) -> int:
-        """
-        Delete DLQ entries older than TTL.
+    async def cleanup_old_dlq_entries(self, ttl_days: int) -> int:
+        """Delete DLQ entries older than TTL."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
 
-        Args:
-            ttl_days: Days to retain entries
-
-        Returns:
-            Number of entries deleted
-        """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl_days)).isoformat()
-
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.execute("DELETE FROM dead_letter_queue WHERE created_at < ?", (cutoff,))
-            conn.commit()
+        pool = self._get_pool()
+        async with pool.connection() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM dead_letter_queue WHERE created_at < %s", (cutoff,)
+            )
             return cursor.rowcount
 
-    def _row_to_dlq_entry(self, row: sqlite3.Row) -> DeadLetterEntry:
+    def _row_to_dlq_entry(self, row: RowMapping) -> DeadLetterEntry:
         """Convert database row to DeadLetterEntry."""
-        # Parse job_data with error handling
-        job_data = {}
-        try:
-            job_data = json.loads(row["job_data_json"])
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.warning("Failed to parse job_data_json for DLQ entry %s: %s", row["id"], e)
-
+        job_data = _decode_json_field(row.get("job_data_json")) or {}
         return DeadLetterEntry(
             id=row["id"],
             job_id=row["job_id"],
             job_data=job_data,
             error_type=row["error_type"],
-            error_message=row["error_message"],
-            retry_count=row["retry_count"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            client_ip=row["client_ip"],
-            correlation_id=row["correlation_id"],
+            error_message=row.get("error_message"),
+            retry_count=row.get("retry_count", 0),
+            created_at=row["created_at"],
+            client_ip=row.get("client_ip"),
+            correlation_id=row.get("correlation_id"),
         )
