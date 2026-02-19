@@ -211,7 +211,7 @@ app = FastAPI(
 # Add API-layer protection middleware (rate limit + payload size)
 app.add_middleware(ApiProtectionMiddleware, config_getter=_get_runtime_config)
 
-# Add correlation ID middleware
+# Add correlation ID middleware (must be added before other middleware)
 app.add_middleware(CorrelationIdMiddleware)
 
 
