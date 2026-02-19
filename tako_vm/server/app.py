@@ -36,6 +36,7 @@ from tako_vm.server.correlation import (
     configure_logging_with_correlation,
     get_correlation_id,
 )
+from tako_vm.server.limits import ApiProtectionMiddleware
 from tako_vm.server.queue import WorkerPool
 from tako_vm.storage import ExecutionStorage
 
@@ -125,6 +126,13 @@ state = AppState()
 state.idempotency_locks = IdempotencyLockManager()
 
 
+def _get_runtime_config() -> TakoVMConfig:
+    """Get active config for middleware checks before/after lifespan startup."""
+    if hasattr(state, "config"):
+        return state.config
+    return get_config()
+
+
 async def _periodic_cleanup(storage: ExecutionStorage, record_ttl_days: int, dlq_ttl_days: int = 7):
     """Background task for periodic database cleanup."""
     cleanup_interval = 3600  # Run every hour
@@ -199,6 +207,9 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+# Add API-layer protection middleware (rate limit + payload size)
+app.add_middleware(ApiProtectionMiddleware, config_getter=_get_runtime_config)
 
 # Add correlation ID middleware (must be added before other middleware)
 app.add_middleware(CorrelationIdMiddleware)

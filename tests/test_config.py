@@ -177,6 +177,10 @@ class TestTakoVMConfig:
         assert config.default_timeout == 30
         assert config.container_runtime == "runsc"
         assert config.security_mode == "strict"
+        assert config.api_max_payload_bytes == 2097152
+        assert config.api_rate_limit_enabled is True
+        assert config.api_rate_limit_requests == 120
+        assert config.api_rate_limit_window_seconds == 60
 
     def test_tako_vm_config_path_resolution(self):
         """TakoVMConfig resolves data_dir while keeping database URL."""
@@ -304,6 +308,37 @@ security_mode: permissive
 
         config = load_config()
         assert config.container_runtime == "runc"
+
+    def test_load_config_env_api_protection_overrides(self, monkeypatch):
+        """API protection environment variables override config values."""
+        monkeypatch.setenv("TAKO_VM_API_MAX_PAYLOAD_BYTES", "4096")
+        monkeypatch.setenv("TAKO_VM_API_RATE_LIMIT_ENABLED", "false")
+        monkeypatch.setenv("TAKO_VM_API_RATE_LIMIT_REQUESTS", "42")
+        monkeypatch.setenv("TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS", "15")
+
+        config = load_config()
+
+        assert config.api_max_payload_bytes == 4096
+        assert config.api_rate_limit_enabled is False
+        assert config.api_rate_limit_requests == 42
+        assert config.api_rate_limit_window_seconds == 15
+
+    @pytest.mark.parametrize(
+        "var_name",
+        [
+            "TAKO_VM_API_MAX_PAYLOAD_BYTES",
+            "TAKO_VM_API_RATE_LIMIT_REQUESTS",
+            "TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS",
+        ],
+    )
+    def test_load_config_env_invalid_api_protection_int_raises(self, monkeypatch, var_name):
+        """Invalid API protection integer env vars raise ConfigurationError."""
+        monkeypatch.setenv(var_name, "not-a-number")
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config()
+
+        assert var_name in str(exc_info.value)
 
     def test_load_config_invalid_raises(self):
         """load_config raises ConfigurationError for invalid config."""

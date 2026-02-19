@@ -17,6 +17,12 @@ server_host: "0.0.0.0"
 server_port: 8000
 log_level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
+# API protection (front-door safeguards)
+api_max_payload_bytes: 2097152       # 2MB max HTTP request body (1KB-100MB)
+api_rate_limit_enabled: true         # Enable per-client-IP rate limiting
+api_rate_limit_requests: 120         # Requests allowed per window (1-100000)
+api_rate_limit_window_seconds: 60    # Rate limit window in seconds (1-3600)
+
 # =============================================================================
 # Workers & Queue
 # =============================================================================
