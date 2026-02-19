@@ -202,6 +202,8 @@ max_timeout: 300
 
 ### Environment Variables
 
+Environment variables are optional overrides. If not set, Tako VM uses values from `tako_vm.yaml` (if present), then built-in defaults.
+
 ```bash
 # Override config file location
 export TAKO_VM_CONFIG=/path/to/config.yaml
@@ -209,6 +211,23 @@ export TAKO_VM_CONFIG=/path/to/config.yaml
 # Override paths
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
 export TAKO_VM_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tako_vm
+
+# API protection (front-door safeguards)
+export TAKO_VM_API_MAX_PAYLOAD_BYTES=2097152
+export TAKO_VM_API_RATE_LIMIT_ENABLED=true
+export TAKO_VM_API_RATE_LIMIT_REQUESTS=120
+export TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS=60
+```
+
+### API Protection
+
+Front-door safeguards to protect the API from oversized payloads and request bursts:
+
+```yaml
+api_max_payload_bytes: 2097152       # 2MB max HTTP request body
+api_rate_limit_enabled: true         # Enable per-client-IP rate limiting
+api_rate_limit_requests: 120         # Requests allowed per window
+api_rate_limit_window_seconds: 60    # Rate limit window in seconds
 ```
 
 ### Container Limits

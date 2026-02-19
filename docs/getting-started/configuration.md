@@ -33,6 +33,14 @@ server_port: 8000          # Port to bind to
 database_url: "postgresql://postgres:postgres@localhost:5432/tako_vm"
 
 # ==============================================================================
+# API PROTECTION
+# ==============================================================================
+api_max_payload_bytes: 2097152       # 2MB max HTTP request body
+api_rate_limit_enabled: true         # Enable per-client-IP rate limiting
+api_rate_limit_requests: 120         # Requests allowed per window
+api_rate_limit_window_seconds: 60    # Rate limit window in seconds
+
+# ==============================================================================
 # EXECUTION LIMITS
 # ==============================================================================
 default_timeout: 30       # seconds
@@ -130,6 +138,12 @@ export TAKO_VM_SECURITY_MODE=permissive  # Allow fallback to runc if gVisor unav
 # Container runtime (runsc or runc)
 export TAKO_VM_CONTAINER_RUNTIME=runsc   # Use gVisor for strong isolation
 
+# API protection (front-door safeguards)
+export TAKO_VM_API_MAX_PAYLOAD_BYTES=2097152
+export TAKO_VM_API_RATE_LIMIT_ENABLED=true
+export TAKO_VM_API_RATE_LIMIT_REQUESTS=120
+export TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS=60
+
 # Security features (true/false/1/0/yes/no)
 export TAKO_VM_ENABLE_SECCOMP=true       # Enable syscall filtering
 export TAKO_VM_ENABLE_CAP_RESTRICTIONS=true  # Enable capability restrictions
@@ -145,6 +159,10 @@ export XDG_DATA_HOME=/custom/data/path  # Tako VM will use $XDG_DATA_HOME/tako_v
 | `TAKO_VM_DATABASE_URL` | PostgreSQL connection URL | `postgresql://postgres:postgres@localhost:5432/tako_vm` |
 | `TAKO_VM_SECURITY_MODE` | Security mode (`strict` or `permissive`) | `strict` |
 | `TAKO_VM_CONTAINER_RUNTIME` | Container runtime (`runsc` or `runc`) | `runsc` |
+| `TAKO_VM_API_MAX_PAYLOAD_BYTES` | Max HTTP request body size in bytes | `2097152` |
+| `TAKO_VM_API_RATE_LIMIT_ENABLED` | Enable API rate limiting | `true` |
+| `TAKO_VM_API_RATE_LIMIT_REQUESTS` | Requests allowed per rate-limit window | `120` |
+| `TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window duration (seconds) | `60` |
 | `TAKO_VM_ENABLE_SECCOMP` | Enable seccomp syscall filtering | `true` |
 | `TAKO_VM_ENABLE_CAP_RESTRICTIONS` | Enable capability restrictions | `true` |
 | `XDG_DATA_HOME` | XDG base data directory | `~/.local/share` |
@@ -276,6 +294,10 @@ limactl shell tako-gvisor
 | `log_level` | Logging level | `INFO` |
 | `server_host` | Server bind host | `0.0.0.0` |
 | `server_port` | Server bind port | `8000` |
+| `api_max_payload_bytes` | Max HTTP request body size (bytes) | `2097152` |
+| `api_rate_limit_enabled` | Enable API rate limiting | `true` |
+| `api_rate_limit_requests` | Requests allowed per rate-limit window | `120` |
+| `api_rate_limit_window_seconds` | Rate-limit window duration (seconds) | `60` |
 | `max_retry_attempts` | Max retries for transient failures | `2` |
 | `retry_base_delay` | Base delay between retries (seconds) | `1.0` |
 | `queue_wait_timeout` | Queue wait timeout (seconds) | `1.0` |
