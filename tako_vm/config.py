@@ -412,6 +412,16 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
     """
     config_dict: Dict[str, Any] = {}
 
+    def parse_env_int(var_name: str) -> int:
+        """Parse integer environment variables with clear config errors."""
+        value = os.environ[var_name]
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Invalid configuration: {var_name} must be an integer (got {value!r})"
+            ) from exc
+
     # Find config file
     if config_path is None:
         config_path = find_config_file()
@@ -447,7 +457,7 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
             "yes",
         )
     if "TAKO_VM_API_MAX_PAYLOAD_BYTES" in os.environ:
-        config_dict["api_max_payload_bytes"] = int(os.environ["TAKO_VM_API_MAX_PAYLOAD_BYTES"])
+        config_dict["api_max_payload_bytes"] = parse_env_int("TAKO_VM_API_MAX_PAYLOAD_BYTES")
     if "TAKO_VM_API_RATE_LIMIT_ENABLED" in os.environ:
         config_dict["api_rate_limit_enabled"] = os.environ[
             "TAKO_VM_API_RATE_LIMIT_ENABLED"
@@ -457,10 +467,10 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
             "yes",
         )
     if "TAKO_VM_API_RATE_LIMIT_REQUESTS" in os.environ:
-        config_dict["api_rate_limit_requests"] = int(os.environ["TAKO_VM_API_RATE_LIMIT_REQUESTS"])
+        config_dict["api_rate_limit_requests"] = parse_env_int("TAKO_VM_API_RATE_LIMIT_REQUESTS")
     if "TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS" in os.environ:
-        config_dict["api_rate_limit_window_seconds"] = int(
-            os.environ["TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS"]
+        config_dict["api_rate_limit_window_seconds"] = parse_env_int(
+            "TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS"
         )
 
     # Validate and create config

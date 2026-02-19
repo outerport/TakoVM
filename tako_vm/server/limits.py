@@ -135,33 +135,11 @@ class ApiProtectionMiddleware:
             )
             return
 
-        body_bytes_seen = 0
-        response_started = False
-
-        async def guarded_receive() -> Message:
-            nonlocal body_bytes_seen
-            message = await receive()
-
-            if message["type"] == "http.request":
-                chunk = message.get("body", b"")
-                body_bytes_seen += len(chunk)
-
-                if body_bytes_seen > config.api_max_payload_bytes:
-                    raise PayloadTooLargeError
-
-            return message
-
-        async def guarded_send(message: Message) -> None:
-            nonlocal response_started
-            if message["type"] == "http.response.start":
-                response_started = True
-            await send(message)
-
         try:
-            await self.app(scope, guarded_receive, guarded_send)
+            buffered_messages = await self._buffer_and_validate_body(
+                receive, config.api_max_payload_bytes
+            )
         except PayloadTooLargeError:
-            if response_started:
-                raise
             await self._send_error_response(
                 scope,
                 receive,
@@ -172,6 +150,43 @@ class ApiProtectionMiddleware:
                     f"Maximum allowed size is {config.api_max_payload_bytes} bytes."
                 ),
             )
+            return
+
+        buffered_messages_iter = iter(buffered_messages)
+
+        async def replay_receive() -> Message:
+            try:
+                return next(buffered_messages_iter)
+            except StopIteration:
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+        await self.app(scope, replay_receive, send)
+
+    async def _buffer_and_validate_body(
+        self, receive: Receive, max_payload_bytes: int
+    ) -> list[Message]:
+        """Read and validate request body size even if downstream ignores it."""
+        buffered_messages: list[Message] = []
+        body_bytes_seen = 0
+
+        while True:
+            message = await receive()
+            buffered_messages.append(message)
+
+            message_type = message["type"]
+            if message_type == "http.request":
+                body_bytes_seen += len(message.get("body", b""))
+                if body_bytes_seen > max_payload_bytes:
+                    raise PayloadTooLargeError
+
+                if not message.get("more_body", False):
+                    break
+            elif message_type == "http.disconnect":
+                break
+            else:
+                break
+
+        return buffered_messages
 
     def _get_rate_limiter(self, config: TakoVMConfig) -> FixedWindowRateLimiter:
         """Create or refresh rate limiter if settings changed."""

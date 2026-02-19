@@ -1,5 +1,7 @@
 """Tests for API-layer request protection middleware."""
 
+from contextlib import contextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
@@ -34,7 +36,32 @@ def create_client(
         body = await request.body()
         return {"size": len(body)}
 
+    @app.get("/ignore-body")
+    async def ignore_body_endpoint():
+        return {"ok": True}
+
     return TestClient(app)
+
+
+@contextmanager
+def create_server_app_client(config: TakoVMConfig):
+    """Create client against the real server app with injected config."""
+    from tako_vm.server.app import app as server_app
+    from tako_vm.server.app import state as server_state
+
+    had_config = hasattr(server_state, "config")
+    previous_config = getattr(server_state, "config", None)
+    server_state.config = config
+    client = TestClient(server_app)
+    try:
+        yield client
+    finally:
+        client.close()
+        if had_config:
+            assert previous_config is not None
+            server_state.config = previous_config
+        else:
+            delattr(server_state, "config")
 
 
 class TestApiRateLimiting:
@@ -104,3 +131,39 @@ class TestApiPayloadLimit:
 
             assert response.status_code == 200
             assert response.json()["size"] == 1024
+
+    def test_oversized_chunked_payload_rejected_when_body_ignored(self):
+        """Chunked oversized payloads are rejected even if route does not read body."""
+        with create_client(api_max_payload_bytes=1024) as client:
+            response = client.request(
+                "GET", "/ignore-body", content=(b"x" * 1500 for _ in range(1))
+            )
+
+            assert response.status_code == 413
+            payload = response.json()
+            assert "payload too large" in payload["detail"].lower()
+            assert isinstance(payload.get("correlation_id"), str)
+            assert payload["correlation_id"]
+
+
+class TestApiProtectionAppIntegration:
+    """Integration checks against the real server app wiring."""
+
+    def test_real_app_docs_exempt_and_non_exempt_limited(self):
+        """Docs routes stay exempt while normal routes are rate-limited."""
+        config = TakoVMConfig(
+            api_rate_limit_enabled=True,
+            api_rate_limit_requests=1,
+            api_rate_limit_window_seconds=137,
+        )
+
+        with create_server_app_client(config) as client:
+            for _ in range(3):
+                assert client.get("/docs").status_code == 200
+                assert client.get("/openapi.json").status_code == 200
+
+            first = client.get("/does-not-exist")
+            second = client.get("/does-not-exist")
+
+            assert first.status_code == 404
+            assert second.status_code == 429

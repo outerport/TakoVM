@@ -323,6 +323,23 @@ security_mode: permissive
         assert config.api_rate_limit_requests == 42
         assert config.api_rate_limit_window_seconds == 15
 
+    @pytest.mark.parametrize(
+        "var_name",
+        [
+            "TAKO_VM_API_MAX_PAYLOAD_BYTES",
+            "TAKO_VM_API_RATE_LIMIT_REQUESTS",
+            "TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS",
+        ],
+    )
+    def test_load_config_env_invalid_api_protection_int_raises(self, monkeypatch, var_name):
+        """Invalid API protection integer env vars raise ConfigurationError."""
+        monkeypatch.setenv(var_name, "not-a-number")
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config()
+
+        assert var_name in str(exc_info.value)
+
     def test_load_config_invalid_raises(self):
         """load_config raises ConfigurationError for invalid config."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
