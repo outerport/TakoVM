@@ -13,6 +13,7 @@ from tako_vm.config import (
     ConfigurationError,
     ContainerLimits,
     JobTypeConfig,
+    JobTypeGPUConfig,
     TakoVMConfig,
     find_config_file,
     get_config,
@@ -164,6 +165,62 @@ class TestJobTypeConfig:
         with pytest.raises(ValueError) as exc_info:
             JobTypeConfig(name="test", memory_limit="64g")
         assert "at most 32g" in str(exc_info.value)
+
+
+class TestJobTypeGPUConfig:
+    """Tests for JobTypeGPUConfig validation."""
+
+    def test_job_type_gpu_config_defaults(self):
+        """GPU config defaults to disabled with no selection."""
+        config = JobTypeGPUConfig()
+        assert config.enabled is False
+        assert config.vendor is None
+        assert config.count is None
+        assert config.device_ids == []
+
+    def test_job_type_gpu_config_nvidia_count(self):
+        """NVIDIA GPU config accepts count selection."""
+        config = JobTypeGPUConfig(enabled=True, vendor="NVIDIA", count=2)
+        assert config.enabled is True
+        assert config.vendor == "nvidia"
+        assert config.count == 2
+
+    def test_job_type_gpu_config_rejects_missing_vendor(self):
+        """Enabled GPU config requires vendor."""
+        with pytest.raises(ValueError) as exc_info:
+            JobTypeGPUConfig(enabled=True)
+        assert "gpu.vendor is required" in str(exc_info.value)
+
+    def test_job_type_gpu_config_rejects_count_with_device_ids(self):
+        """GPU config forbids combining count and device_ids."""
+        with pytest.raises(ValueError) as exc_info:
+            JobTypeGPUConfig(
+                enabled=True,
+                vendor="nvidia",
+                count=1,
+                device_ids=["GPU-123"],
+            )
+        assert "mutually exclusive" in str(exc_info.value)
+
+    def test_job_type_gpu_config_rejects_amd_count(self):
+        """AMD GPU config does not support count selection."""
+        with pytest.raises(ValueError) as exc_info:
+            JobTypeGPUConfig(enabled=True, vendor="amd", count=1)
+        assert "only supported" in str(exc_info.value)
+
+    def test_job_type_gpu_config_rejects_fields_when_disabled(self):
+        """GPU details are rejected unless enabled=true."""
+        with pytest.raises(ValueError) as exc_info:
+            JobTypeGPUConfig(enabled=False, vendor="nvidia")
+        assert "gpu.enabled must be true" in str(exc_info.value)
+
+    def test_job_type_gpu_config_device_ids_validation(self):
+        """Device IDs are stripped and validated."""
+        config = JobTypeGPUConfig(enabled=True, vendor="nvidia", device_ids=[" GPU-1 ", "GPU-2"])
+        assert config.device_ids == ["GPU-1", "GPU-2"]
+
+        with pytest.raises(ValueError):
+            JobTypeGPUConfig(enabled=True, vendor="nvidia", device_ids=["bad,id"])
 
 
 class TestTakoVMConfig:

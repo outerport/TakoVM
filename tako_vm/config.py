@@ -94,6 +94,63 @@ class ContainerLimits(BaseModel):
         return self
 
 
+class JobTypeGPUConfig(BaseModel):
+    """GPU configuration for a job type."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = Field(default=False)
+    vendor: Optional[str] = Field(default=None, description="GPU vendor: 'nvidia' or 'amd'")
+    count: Optional[int] = Field(default=None, ge=1, le=16)
+    device_ids: List[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("vendor")
+    @classmethod
+    def validate_vendor(cls, v: Optional[str]) -> Optional[str]:
+        """Validate GPU vendor."""
+        if v is None:
+            return None
+        normalized = v.lower().strip()
+        if normalized not in {"nvidia", "amd"}:
+            raise ValueError("gpu.vendor must be one of: amd, nvidia")
+        return normalized
+
+    @field_validator("device_ids")
+    @classmethod
+    def validate_device_ids(cls, values: List[str]) -> List[str]:
+        """Validate GPU device ID list."""
+        normalized: List[str] = []
+        for value in values:
+            device_id = value.strip()
+            if not device_id:
+                raise ValueError("gpu.device_ids cannot contain empty values")
+            if "," in device_id:
+                raise ValueError("gpu.device_ids entries cannot contain commas")
+            normalized.append(device_id)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_gpu_config(self) -> "JobTypeGPUConfig":
+        """Validate cross-field GPU settings."""
+        if not self.enabled:
+            if self.vendor is not None or self.count is not None or self.device_ids:
+                raise ValueError(
+                    "gpu.enabled must be true when setting gpu.vendor, gpu.count, or gpu.device_ids"
+                )
+            return self
+
+        if self.vendor is None:
+            raise ValueError("gpu.vendor is required when gpu.enabled is true")
+
+        if self.count is not None and self.device_ids:
+            raise ValueError("gpu.count and gpu.device_ids are mutually exclusive")
+
+        if self.vendor == "amd" and self.count is not None:
+            raise ValueError("gpu.count is only supported for gpu.vendor='nvidia'")
+
+        return self
+
+
 class JobTypeConfig(BaseModel):
     """Job type configuration for embedding in main config."""
 
@@ -114,6 +171,11 @@ class JobTypeConfig(BaseModel):
     """Timeout for startup phase (container init + dep install) in seconds."""
 
     network_enabled: bool = Field(default=False, description="Allow network access (security risk)")
+    session_enabled: bool = Field(
+        default=False,
+        description="Allow this job type to be used for long-running sessions",
+    )
+    gpu: JobTypeGPUConfig = Field(default_factory=JobTypeGPUConfig)
 
     @field_validator("name")
     @classmethod
@@ -472,7 +534,6 @@ def load_config(config_path: Optional[Path] = None) -> TakoVMConfig:
         config_dict["api_rate_limit_window_seconds"] = parse_env_int(
             "TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS"
         )
-
     # Validate and create config
     try:
         config = TakoVMConfig(**config_dict)
