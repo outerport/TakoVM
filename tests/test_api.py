@@ -155,6 +155,9 @@ class TestJobTypes:
         assert data["name"] == "default"
         assert "requirements" in data
         assert "python_version" in data
+        assert "session_enabled" in data
+        assert "gpu_enabled" in data
+        assert "gpu_vendor" in data
 
     def test_job_type_not_found(self, client):
         """Non-existent job type returns 404."""
