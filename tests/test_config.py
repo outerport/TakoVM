@@ -185,6 +185,13 @@ class TestJobTypeGPUConfig:
         assert config.vendor == "nvidia"
         assert config.count == 2
 
+        multi_gpu = JobTypeGPUConfig(
+            enabled=True,
+            vendor="NVIDIA",
+            device_ids=[" GPU-1 ", "GPU-2"],
+        )
+        assert multi_gpu.device_ids == ["GPU-1", "GPU-2"]
+
     def test_job_type_gpu_config_rejects_missing_vendor(self):
         """Enabled GPU config requires vendor."""
         with pytest.raises(ValueError) as exc_info:
@@ -221,6 +228,15 @@ class TestJobTypeGPUConfig:
 
         with pytest.raises(ValueError):
             JobTypeGPUConfig(enabled=True, vendor="nvidia", device_ids=["bad,id"])
+
+        with pytest.raises(ValueError):
+            JobTypeGPUConfig(enabled=True, vendor="nvidia", device_ids=["GPU-1", "GPU-1"])
+
+        with pytest.raises(ValueError):
+            JobTypeGPUConfig(enabled=True, vendor="nvidia", device_ids=[" GPU-1 ", "GPU-1"])
+
+        with pytest.raises(ValueError):
+            JobTypeGPUConfig(enabled=True, vendor="nvidia", device_ids=["GPU-1", "gpu-1"])
 
 
 class TestTakoVMConfig:

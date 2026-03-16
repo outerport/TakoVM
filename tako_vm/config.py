@@ -120,12 +120,16 @@ class JobTypeGPUConfig(BaseModel):
     def validate_device_ids(cls, values: List[str]) -> List[str]:
         """Validate GPU device ID list."""
         normalized: List[str] = []
+        seen: set[str] = set()
         for value in values:
             device_id = value.strip()
             if not device_id:
                 raise ValueError("gpu.device_ids cannot contain empty values")
             if "," in device_id:
                 raise ValueError("gpu.device_ids entries cannot contain commas")
+            if device_id.lower() in seen:
+                raise ValueError("gpu.device_ids cannot contain duplicate values")
+            seen.add(device_id.lower())
             normalized.append(device_id)
         return normalized
 
