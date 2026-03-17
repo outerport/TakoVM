@@ -55,7 +55,7 @@ This builds the base execution container with Python 3.11 and uv.
 
 ```bash
 tako-vm version
-# tako-vm 2.0.0
+# tako-vm 0.1.4
 
 tako-vm --help
 # Shows all available commands
@@ -83,7 +83,7 @@ Expected output:
 {
   "status": "healthy",
   "docker_available": true,
-  "version": "2.0.0"
+  "version": "0.1.4"
 }
 ```
 

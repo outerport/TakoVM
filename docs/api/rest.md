@@ -613,7 +613,7 @@ GET /health
     "success_count": 5,
     "last_failure": null
   },
-  "version": "2.0.0",
+  "version": "0.1.4",
   "production_mode": false,
   "queue_stats": {
     "pending": 0,
