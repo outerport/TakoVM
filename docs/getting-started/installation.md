@@ -2,10 +2,21 @@
 
 ## Prerequisites
 
-- **Docker** 20.10 or later
-- **Python** 3.9 or later
-- **[uv](https://github.com/astral-sh/uv)**
-- **gVisor** (recommended for production) - See [gVisor installation](https://gvisor.dev/docs/user_guide/install/)
+Before installing Tako VM, verify you have the following:
+
+| Requirement | Minimum Version | Check Command | Required? |
+|-------------|----------------|---------------|-----------|
+| **Docker** | 20.10+ | `docker --version` | Yes |
+| **Python** | 3.9+ | `python3 --version` | Yes |
+| **[uv](https://github.com/astral-sh/uv)** | any | `uv --version` | Recommended (pip also works) |
+| **gVisor** | any | `docker run --runtime=runsc --rm hello-world` | Production only |
+
+!!! note "Quick pre-flight check"
+    ```bash
+    docker info > /dev/null 2>&1 && echo "Docker: OK" || echo "Docker: NOT RUNNING"
+    python3 --version
+    ```
+    Docker must be **running** (not just installed). On macOS/Windows, start Docker Desktop first.
 
 ## Install Tako VM
 

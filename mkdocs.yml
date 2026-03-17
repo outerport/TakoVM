@@ -47,6 +47,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - Configuration: getting-started/configuration.md
   - Guide:
+    - Tutorial: guide/tutorial.md
     - Basic Execution: guide/basic-execution.md
     - Async Jobs: guide/async-jobs.md
     - Environments: guide/environments.md
@@ -60,6 +61,7 @@ nav:
     - How to Deploy: deployment/how-to-deploy.md
     - Production Setup: deployment/production.md
     - Scaling: deployment/scaling.md
+    - Operations: deployment/operations.md
     - Security: deployment/security.md
   - Security:
     - Mitigations: security/mitigations.md

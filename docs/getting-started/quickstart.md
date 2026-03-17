@@ -19,6 +19,9 @@ tako-vm server --port 9000
 !!! note "gVisor on Linux"
     Tako VM defaults to `permissive` mode, which falls back to runc if gVisor is not installed. For production, set `security_mode: strict` to require gVisor. See [Security](../deployment/security.md#gvisor-runtime) for installation instructions.
 
+!!! warning "Security: Environment Variables"
+    Do not pass secrets (API keys, tokens, passwords) as job type environment variables. User code can read them via `/proc/self/environ`. Pass sensitive data through `input_data` instead, which is scoped to a single job. See [Security Mitigations](../security/mitigations.md) for details.
+
 ## Execute Code
 
 ### Using curl

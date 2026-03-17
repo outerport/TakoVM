@@ -7,9 +7,9 @@
 3. Container starts, `entrypoint.sh` runs `uv pip install pandas numpy`
 4. Code runs as `sandbox` user (uid 1000) via `gosu`
 
-For network-isolated jobs with deps, use pre-built images:
+For network-isolated jobs with deps, use pre-built images via the REST API:
 ```bash
-tako-vm build job-type data-processing
+curl -X POST http://localhost:8000/job-types/data-processing/build
 # Then set base_image in job type config
 ```
 
