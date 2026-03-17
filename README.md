@@ -15,17 +15,17 @@
 Run AI-generated code in isolated Docker containers with gVisor sandboxing.
 Job queues, retries, and execution history included.
 
+**Requires:** [Docker](https://docs.docker.com/get-docker/) and Python 3.9+
+
 ```bash
-uv pip install tako-vm
-tako-vm setup
-```
-
-```python
+pip install tako-vm        # install the package
+tako-vm setup              # pull the executor Docker image (~30s one-time)
+python -c "
 from tako_vm import Sandbox
-
 with Sandbox() as sb:
-    result = sb.run("print(1 + 1)")
-    print(result.stdout)  # "2"
+    result = sb.run('print(1 + 1)')
+    print(result.stdout)   # 2
+"
 ```
 
 ## Why Tako VM?
