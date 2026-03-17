@@ -249,7 +249,7 @@ class TestTakoVMConfig:
         assert config.max_workers == 4
         assert config.default_timeout == 30
         assert config.container_runtime == "runsc"
-        assert config.security_mode == "strict"
+        assert config.security_mode == "permissive"
         assert config.api_max_payload_bytes == 2097152
         assert config.api_rate_limit_enabled is True
         assert config.api_rate_limit_requests == 120

@@ -348,8 +348,8 @@ security_mode: strict      # 'strict' (require gVisor) or 'permissive' (fallback
 
 **Security modes:**
 
-- **strict** (default): Fails with `RuntimeUnavailableError` if gVisor is not available. Recommended for production.
-- **permissive**: Falls back to standard runc runtime with a warning. Useful for development.
+- **permissive** (default): Falls back to standard runc runtime with a warning. Works on all platforms.
+- **strict**: Fails with `RuntimeUnavailableError` if gVisor is not available. Recommended for production.
 
 **Environment variable override (useful for testing):**
 ```bash

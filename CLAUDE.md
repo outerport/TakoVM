@@ -24,7 +24,7 @@ lima-gvisor.yaml         # Lima VM config for macOS/Windows development with gVi
 ## Key Concepts
 
 - **gVisor by default**: Uses `runsc` runtime for strong isolation (userspace kernel). Required in `strict` mode.
-- **Security modes**: `strict` (default) fails if gVisor unavailable; `permissive` allows fallback to runc
+- **Security modes**: `permissive` (default) allows fallback to runc; `strict` fails if gVisor unavailable
 - **Runtime deps**: Dependencies installed via `uv pip install` at container startup (fast!)
 - **ExecutionRecord** status: `queued`, `running`, `succeeded`, `failed`, `timeout`, `oom`, `cancelled`
 - **ExecutionRecord.timing**: Phase breakdown (startup, execution durations) from `/output/.tako_phase`

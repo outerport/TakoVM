@@ -59,7 +59,7 @@ uv pip install ".[server]"
 ```
 
 !!! note "gVisor is optional but recommended"
-    Tako VM uses gVisor by default (`security_mode: strict`). If gVisor is not installed, set `security_mode: permissive` in your config or use `TAKO_VM_SECURITY_MODE=permissive`.
+    Tako VM defaults to `security_mode: permissive`, which falls back to runc if gVisor is not installed. For production, set `security_mode: strict` to require gVisor.
 
 ### 3. Build the Executor Image
 

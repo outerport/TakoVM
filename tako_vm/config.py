@@ -344,7 +344,7 @@ class TakoVMConfig(BaseModel):
 
     # Security mode
     security_mode: str = Field(
-        default="strict",
+        default="permissive",
         description="Security mode: 'strict' fails if gVisor unavailable, 'permissive' allows fallback to runc",
     )
 
