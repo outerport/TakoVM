@@ -256,7 +256,7 @@ Tako VM separates startup time from code execution time:
 
 ## gVisor and Security Modes
 
-Tako VM uses gVisor (runsc) by default for strong container isolation:
+Tako VM supports gVisor (runsc) for strong container isolation:
 
 | Option | Description | Default |
 |--------|-------------|---------|

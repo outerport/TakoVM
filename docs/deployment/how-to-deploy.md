@@ -357,7 +357,7 @@ docker build -t code-executor:latest .
 
 # Create production config
 cat > tako_vm.yaml << 'EOF'
-production_mode: false
+production_mode: true
 max_workers: 4
 EOF
 
