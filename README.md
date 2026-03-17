@@ -18,14 +18,26 @@ Job queues, retries, and execution history included.
 **Requires:** [Docker](https://docs.docker.com/get-docker/) and Python 3.9+
 
 ```bash
-pip install tako-vm        # install the package
-tako-vm setup              # pull the executor Docker image (~30s one-time)
-python -c "
+pip install "tako-vm[server]"   # install with server dependencies
+tako-vm setup                   # pull the executor Docker image
+tako-vm server                  # start server (auto-starts PostgreSQL via Docker)
+```
+
+```bash
+# Execute code
+curl -X POST http://localhost:8000/execute \
+  -H "Content-Type: application/json" \
+  -d '{"code": "print(1 + 1)"}'
+```
+
+Or use directly as a library (no server or PostgreSQL needed):
+
+```python
 from tako_vm import Sandbox
+
 with Sandbox() as sb:
-    result = sb.run('print(1 + 1)')
-    print(result.stdout)   # 2
-"
+    result = sb.run("print(1 + 1)")
+    print(result.stdout)  # "2"
 ```
 
 ## Why Tako VM?
