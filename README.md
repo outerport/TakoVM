@@ -83,6 +83,11 @@ docker build -t code-executor:latest -f docker/Dockerfile.executor .
 
 No server or database needed — just Docker.
 
+```bash
+uv pip install tako-vm
+tako-vm setup
+```
+
 ```python
 from tako_vm import Sandbox
 
@@ -126,17 +131,25 @@ Your code runs in a container with these paths:
 
 ## Quick Start: Server Mode
 
-For production workloads with job queuing, retries, and execution history:
+For production workloads with job queuing, retries, and execution history.
+
+Requires Docker (for PostgreSQL + executor containers):
 
 ```bash
 # Install with server dependencies
 uv pip install "tako-vm[server]"
+tako-vm setup
 
-# Start server (auto-starts local PostgreSQL if needed)
+# Start server (auto-starts local PostgreSQL via Docker)
 tako-vm server
+```
 
-# Or start PostgreSQL explicitly first
-tako-vm dev up --with-server
+`tako-vm server` automatically pulls and starts a PostgreSQL container on port 55432 when no database is configured. To manage the database separately:
+
+```bash
+tako-vm dev up           # Start PostgreSQL only
+tako-vm dev status       # Check if it's running
+tako-vm dev down         # Stop it
 ```
 
 ```bash
@@ -144,6 +157,13 @@ tako-vm dev up --with-server
 curl -X POST http://localhost:8000/execute \
   -H "Content-Type: application/json" \
   -d '{"code": "print(1 + 1)", "requirements": ["requests"]}'
+```
+
+For an existing PostgreSQL instance:
+
+```bash
+export TAKO_VM_DATABASE_URL=postgresql://user:pass@host:5432/tako_vm
+tako-vm server
 ```
 
 ## SDK
