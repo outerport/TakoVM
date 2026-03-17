@@ -6,12 +6,21 @@
   <strong>Run untrusted Python safely. Job queues and Docker isolation built-in.</strong>
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/tako-vm/"><img src="https://img.shields.io/pypi/v/tako-vm" alt="PyPI"></a>
+  <a href="https://github.com/las7/TakoVM/actions"><img src="https://github.com/las7/TakoVM/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/las7/TakoVM/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
+</p>
+
 Run AI-generated code in isolated Docker containers with gVisor sandboxing.
-Job queues, retries, and execution history included—no Redis or Postgres required.
+Job queues, retries, and execution history included.
+
+```bash
+uv pip install tako-vm
+tako-vm setup
+```
 
 ```python
-uv pip install tako-vm
-
 from tako_vm import Sandbox
 
 with Sandbox() as sb:
@@ -25,11 +34,11 @@ Sandbox solutions like [e2b](https://e2b.dev) and [microsandbox](https://github.
 
 | You build | With sandbox-only | With Tako VM |
 |-----------|-------------------|--------------|
-| Job queue | Redis + Celery/Bull | ✅ Built-in |
-| Execution history | Postgres + schema | ✅ PostgreSQL included |
-| Retry logic | Custom code | ✅ Automatic |
-| Idempotency | Deduplication logic | ✅ `idempotency_key` |
-| Replay/debugging | Custom tooling | ✅ Rerun/fork API |
+| Job queue | Redis + Celery/Bull | Built-in |
+| Execution history | Postgres + schema | PostgreSQL included |
+| Retry logic | Custom code | Automatic |
+| Idempotency | Deduplication logic | `idempotency_key` |
+| Replay/debugging | Custom tooling | Rerun/fork API |
 
 **Tako VM is the complete package:**
 
@@ -40,40 +49,39 @@ Sandbox solutions like [e2b](https://e2b.dev) and [microsandbox](https://github.
 - **Network isolation** - No network by default, optional allowlist per job type
 - **Self-hosted** - Your machine, offline-capable, zero per-execution cost
 
-## Architecture
-
-Tako VM executes Python code in isolated Docker containers with:
-- **Security** - Network isolation, read-only filesystem, seccomp filtering, resource limits
-- **Configurability** - Pydantic-validated YAML config with env var overrides
-- **Job Types** - Pre-configured environments with network control per job type
-- **Fast Dependencies** - Runtime package installation via [uv](https://github.com/astral-sh/uv) (~10x faster than pip)
-- **Execution History** - Full job records with timing, artifacts, and error details
-
-**Security layers applied to every container:**
-- gVisor runtime (userspace kernel) by default
-- `--network=none` (isolated by default)
-- `--read-only` filesystem
-- `--cap-drop=ALL` (except SETUID/SETGID for privilege dropping)
-- Seccomp syscall filtering
-- Non-root execution (uid 1000 via gosu)
-
 ## Installation
 
 ### Prerequisites
 
 - Docker 20.10+
 - Python 3.9+
-- [uv](https://github.com/astral-sh/uv)
 
-### Install
+### From PyPI
 
-```zsh
-uv venv && source .venv/bin/activate
-uv pip install -e ".[server]"
+```bash
+uv pip install tako-vm    # or: pip install tako-vm
+tako-vm setup             # pulls the executor Docker image from GHCR
+```
+
+`tako-vm setup` checks that Docker is running, pulls the executor image, and verifies it works.
+
+### For server mode (adds FastAPI + uvicorn)
+
+```bash
+uv pip install "tako-vm[server]"
+```
+
+### From source (development)
+
+```bash
+git clone https://github.com/las7/TakoVM.git && cd TakoVM
+uv sync --all-extras
 docker build -t code-executor:latest -f docker/Dockerfile.executor .
 ```
 
-## Quick Start (Library Mode)
+## Quick Start: Library Mode
+
+No server or database needed — just Docker.
 
 ```python
 from tako_vm import Sandbox
@@ -90,10 +98,6 @@ import pandas as pd
 print(pd.__version__)
 """, requirements=["pandas"])
 
-# With local packages
-sb = Sandbox(package_dirs=["./my_utils"])
-result = sb.run("from my_utils import helper; helper.process()")
-
 # With input/output data
 with Sandbox() as sb:
     result = sb.run("""
@@ -105,25 +109,34 @@ with open("/output/result.json", "w") as f:
     json.dump(result, f)
 """, input_data={"x": 10, "y": 20})
     print(result.output)  # {"sum": 30}
+
+# Network access (disabled by default)
+with Sandbox(network_enabled=True) as sb:
+    result = sb.run("""
+import urllib.request
+resp = urllib.request.urlopen("https://httpbin.org/get")
+print(resp.status)
+""")
 ```
 
 Your code runs in a container with these paths:
 - `/input/data.json` - Your `input_data` as JSON (read-only)
-- `/output/result.json` - Write output here, returned as `result.output`
+- `/output/` - Write output files here, returned as `result.output`
 - `/tmp/` - Temporary files (read-write)
 
-The first run builds the executor Docker image automatically (~30 seconds one-time setup).
-
-## Quick Start (Server Mode)
+## Quick Start: Server Mode
 
 For production workloads with job queuing, retries, and execution history:
 
 ```bash
-# Zero-setup local development (starts managed PostgreSQL if needed)
-tako-vm dev up --with-server
+# Install with server dependencies
+uv pip install "tako-vm[server]"
 
-# Or start server directly (auto-starts local PostgreSQL when using defaults)
+# Start server (auto-starts local PostgreSQL if needed)
 tako-vm server
+
+# Or start PostgreSQL explicitly first
+tako-vm dev up --with-server
 ```
 
 ```bash
@@ -133,7 +146,7 @@ curl -X POST http://localhost:8000/execute \
   -d '{"code": "print(1 + 1)", "requirements": ["requests"]}'
 ```
 
-## SDK Usage
+## SDK
 
 ```python
 from dataclasses import dataclass
@@ -157,32 +170,28 @@ result = tako_vm.send(add, Input(10, 20))
 print(result.result)  # 30
 ```
 
-## CLI Commands
+## CLI
 
 ```bash
-tako-vm --help                    # Show all commands
+tako-vm setup                     # Pull executor image and verify Docker
 tako-vm server                    # Start the API server
 tako-vm server --port 9000        # Custom port
 tako-vm dev up                    # Start local PostgreSQL for development
-tako-vm dev up --with-server      # Start local PostgreSQL + API server
-tako-vm dev status                # Check local PostgreSQL helper status
-tako-vm dev down                  # Stop local PostgreSQL helper container
-tako-vm --config my.yaml server   # Use specific config file
-
+tako-vm dev up --with-server      # Start PostgreSQL + API server
+tako-vm dev status                # Check local PostgreSQL status
+tako-vm dev down                  # Stop local PostgreSQL
 tako-vm config                    # Show current configuration
 tako-vm config --json             # Output as JSON
 tako-vm validate                  # Validate current config
 tako-vm validate my.yaml          # Validate specific file
-
 tako-vm status                    # Check server health
 tako-vm version                   # Show version
+tako-vm --config my.yaml server   # Use specific config file
 ```
 
 ## Configuration
 
 Tako VM uses YAML configuration with Pydantic validation. All values have sensible defaults.
-
-### Quick Setup
 
 ```yaml
 # tako_vm.yaml
@@ -192,7 +201,7 @@ default_timeout: 30
 max_timeout: 300
 ```
 
-### Config File Search Order
+### Config file search order
 
 1. `TAKO_VM_CONFIG` environment variable
 2. `./tako_vm.yaml`
@@ -200,39 +209,19 @@ max_timeout: 300
 4. `~/.tako_vm/config.yaml`
 5. `/etc/tako_vm/config.yaml`
 
-### Environment Variables
+### Environment variables
 
-Environment variables are optional overrides. If not set, Tako VM uses values from `tako_vm.yaml` (if present), then built-in defaults.
+All optional — override config file values or built-in defaults.
 
 ```bash
-# Override config file location
 export TAKO_VM_CONFIG=/path/to/config.yaml
-
-# Override paths
 export TAKO_VM_DATA_DIR=/var/lib/tako_vm
 export TAKO_VM_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tako_vm
-
-# API protection (front-door safeguards)
-export TAKO_VM_API_MAX_PAYLOAD_BYTES=2097152
+export TAKO_VM_SECURITY_MODE=permissive   # strict or permissive
 export TAKO_VM_API_RATE_LIMIT_ENABLED=true
-export TAKO_VM_API_RATE_LIMIT_REQUESTS=120
-export TAKO_VM_API_RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
-### API Protection
-
-Front-door safeguards to protect the API from oversized payloads and request bursts:
-
-```yaml
-api_max_payload_bytes: 2097152       # 2MB max HTTP request body
-api_rate_limit_enabled: true         # Enable per-client-IP rate limiting
-api_rate_limit_requests: 120         # Requests allowed per window
-api_rate_limit_window_seconds: 60    # Rate limit window in seconds
-```
-
-### Container Limits
-
-Fine-grained control over container resources:
+### Container limits
 
 ```yaml
 container_limits:
@@ -245,25 +234,13 @@ container_limits:
   tmpfs_size: "100m"     # /tmp size (10m-2g)
 ```
 
-### Full Example
-
-See [tako_vm.yaml.example](tako_vm.yaml.example) for all options with documentation.
+See [tako_vm.yaml.example](tako_vm.yaml.example) for all options.
 
 ## Job Types
 
 Job types are pre-configured execution environments with specific dependencies and limits.
 
-### How Dependencies Work
-
-Tako VM uses **runtime dependency installation** with [uv](https://github.com/astral-sh/uv):
-
-1. A single base image (`code-executor:latest`) handles all job types
-2. When a job runs, dependencies are installed via `uv pip install` (fast!)
-3. Dependencies are cached in a Docker volume for repeated installs
-
-This approach is simpler than pre-building images for each job type, with minimal startup overhead.
-
-### Built-in Types
+### Built-in types
 
 | Type | Packages | Network | Use Case |
 |------|----------|---------|----------|
@@ -272,7 +249,7 @@ This approach is simpler than pre-building images for each job type, with minima
 | `ml-inference` | numpy, scikit-learn | isolated | ML inference |
 | `api-client` | requests, httpx | enabled | External API calls |
 
-### Define Custom Job Types
+### Custom job types
 
 ```yaml
 job_types:
@@ -291,76 +268,23 @@ job_types:
     network_enabled: true
 ```
 
-### Network Control
+### How dependencies work
 
-By default, containers have **no network access** (`--network=none`).
+Tako VM uses **runtime dependency installation** with [uv](https://github.com/astral-sh/uv):
 
-To enable network:
-```yaml
-job_types:
-  - name: my-api-job
-    network_enabled: true      # Allow outbound connections
-```
+1. A single base image (`code-executor:latest`) handles all job types
+2. When a job runs, dependencies are installed via `uv pip install` (~10x faster than pip)
+3. Dependencies are cached in a Docker volume for repeated installs
 
-> **Note:** Jobs with runtime requirements need network access to install packages. If `network_enabled: false` with requirements, Tako VM temporarily uses bridge network for installation, then runs code with isolation. For true network isolation with dependencies, use pre-built images (see below).
-
-### Pre-built Images (Optional)
-
-For high-throughput production or true network isolation, you can pre-build images:
+For true network isolation with dependencies, pre-build images:
 
 ```bash
-# Build a specific job type image with dependencies baked in
 tako-vm build job-type data-processing
-
-# Then configure to use the pre-built image
-job_types:
-  - name: data-processing
-    base_image: tako-vm-data-processing:latest
-    requirements: []  # Already installed in image
-    network_enabled: false  # True isolation now possible
 ```
 
-### Custom Libraries
+## API
 
-For internal/proprietary packages not on PyPI, drop `.whl` files into `tako_vm/custom_libs/` and rebuild the executor image:
-
-```bash
-cp your_lib-1.0.0-py3-none-any.whl tako_vm/custom_libs/
-docker build -t code-executor:latest -f docker/Dockerfile.executor .
-```
-
-See [Custom Libraries](docs/guide/custom-libraries.md) for details.
-
-## API Usage
-
-### Execute Code
-
-```bash
-# Simple execution
-curl -X POST http://localhost:8000/execute \
-  -H "Content-Type: application/json" \
-  -d '{"code": "print(1 + 1)", "input_data": {}}'
-
-# With job type
-curl -X POST http://localhost:8000/execute \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code": "import pandas as pd; print(pd.__version__)",
-    "input_data": {},
-    "job_type": "data-processing"
-  }'
-
-# Async execution
-curl -X POST http://localhost:8000/execute/async \
-  -H "Content-Type: application/json" \
-  -d '{"code": "...", "input_data": {}}'
-# Returns: {"job_id": "abc123"}
-
-# Get result
-curl http://localhost:8000/jobs/abc123/result
-```
-
-### API Endpoints
+### Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -369,62 +293,17 @@ curl http://localhost:8000/jobs/abc123/result
 | `/jobs/{id}` | GET | Get job status |
 | `/jobs/{id}/result` | GET | Wait for job result |
 | `/jobs/{id}/cancel` | POST | Cancel pending/running job |
+| `/jobs/{id}/rerun` | POST | Rerun with same code and inputs |
+| `/jobs/{id}/fork` | POST | Fork with new code, same inputs |
+| `/jobs/{id}/artifacts/{name}` | GET | Download artifact |
 | `/job-types` | GET | List available job types |
 | `/health` | GET | Health check |
+| `/pool/stats` | GET | Worker pool status |
+| `/dlq/stats` | GET | Dead letter queue stats |
 
-### Advanced Features
+### Timing
 
-Tako VM provides job-native runtime capabilities for production workflows:
-
-**Idempotent Execution** - Submit jobs with `idempotency_key` for safe retries:
-```bash
-curl -X POST http://localhost:8000/execute/async \
-  -H "Content-Type: application/json" \
-  -d '{"code": "...", "input_data": {}, "idempotency_key": "my-unique-key"}'
-```
-
-**Rerun/Fork** - "Time machine" debugging to reproduce or modify past executions:
-```bash
-# Rerun with exact same code and inputs
-curl -X POST http://localhost:8000/jobs/{job_id}/rerun
-
-# Fork with new code, same inputs
-curl -X POST http://localhost:8000/jobs/{job_id}/fork \
-  -d '{"code": "print(\"modified version\")"}'
-```
-
-**Artifact Downloads** - Direct artifact retrieval with ETag caching:
-```bash
-curl http://localhost:8000/jobs/{job_id}/artifacts/result.json
-```
-
-**Complete Job Records** - Use `?view=full` for full execution details including pinned environment references (`job_ref`), content hashes, lineage tracking, and resource metrics:
-```bash
-curl http://localhost:8000/jobs/{job_id}/result?view=full
-```
-
-### Timing & Timeouts
-
-Tako VM separates startup time from code execution time, giving you precise control and visibility:
-
-**Two timeout parameters:**
-- `startup_timeout` - Time limit for container startup + dependency installation (default: 120s, max: 600s)
-- `timeout` - Time limit for your code execution only (default: 30s, max: 300s)
-
-```bash
-curl -X POST http://localhost:8000/execute \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code": "import pandas; print(pandas.__version__)",
-    "requirements": ["pandas"],
-    "startup_timeout": 180,
-    "timeout": 60
-  }'
-```
-
-**Timing breakdown in responses:**
-
-Every response includes a `timing` field showing where time was spent:
+Every response includes a timing breakdown:
 
 ```json
 {
@@ -439,95 +318,33 @@ Every response includes a `timing` field showing where time was spent:
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `startup_ms` | Container init + dependency installation time |
-| `dep_install_ms` | Just the `uv pip install` portion (subset of startup) |
-| `execution_ms` | Your code execution time |
-| `total_ms` | Total container runtime |
-| `phase_at_exit` | Phase when container exited: `startup`, `execution`, `completed`, or `failed` |
+Timeouts are configured separately for startup (`startup_timeout`) and code execution (`timeout`).
 
-**Phase-specific timeout errors:**
+### Idempotency
 
-When a timeout occurs, the error tells you which phase timed out:
-
-```json
-{
-  "status": "timeout",
-  "error": {
-    "type": "startup_timeout",
-    "message": "Startup phase exceeded 120s limit (dependency installation)",
-    "phase": "startup"
-  },
-  "timing": {
-    "startup_ms": 120000,
-    "dep_install_ms": 119500,
-    "execution_ms": null,
-    "phase_at_exit": "startup"
-  }
-}
+```bash
+curl -X POST http://localhost:8000/execute/async \
+  -H "Content-Type: application/json" \
+  -d '{"code": "...", "input_data": {}, "idempotency_key": "my-unique-key"}'
 ```
 
-| Error Type | Description |
-|------------|-------------|
-| `startup_timeout` | Container startup or dependency installation took too long |
-| `execution_timeout` | Your code exceeded the execution time limit |
+See [docs/api/rest.md](docs/api/rest.md) for complete API reference.
 
-This separation helps you diagnose issues: if startup times out, increase `startup_timeout` or use pre-built images; if execution times out, optimize your code or increase `timeout`.
+## Security
 
-See [docs/api/rest.md](docs/api/rest.md) for complete API reference and [docs/architecture.md](docs/architecture.md) for system diagrams.
-
-## Security Features
+**Layers applied to every container:**
 
 | Feature | Description |
 |---------|-------------|
 | gVisor Runtime | Userspace kernel isolation (default, `runsc`) |
-| Security Modes | `strict` (require gVisor) or `permissive` (fallback to runc) |
-| Network Isolation | `--network=none` by default (bridge for dep install) |
+| Network Isolation | `--network=none` by default |
 | Read-Only Filesystem | `--read-only` with tmpfs for /tmp |
-| Seccomp Filtering | Hardened allowlist blocking 47+ dangerous syscalls (see below) |
+| Seccomp Filtering | Blocks 47+ dangerous syscalls |
 | Resource Limits | Memory, CPU, file size, process count |
-| Non-Root Execution | Code runs as uid 1000 (sandbox user) via gosu |
+| Non-Root Execution | Code runs as uid 1000 via gosu |
 | Capability Drop | `--cap-drop=ALL` (except SETUID/SETGID for gosu) |
-| Dependency Caching | Shared uv cache volume across containers |
 
-### Seccomp Profile
-
-Tako VM uses a hardened seccomp profile ([tako_vm/seccomp_profile.json](tako_vm/seccomp_profile.json)) that blocks syscalls commonly used in container escape and privilege escalation:
-
-**Blocked syscalls include:**
-- **Privilege escalation**: `setuid`, `setgid`, `setresuid`, `setresgid`, `capset`
-- **Permission manipulation**: `chmod`, `chown`, `fchmod`, `fchown`
-- **Container escape**: `unshare`, `clone3`, `ptrace`, `process_vm_readv/writev`
-- **Kernel interfaces**: `bpf`, `perf_event_open`, `io_uring_*`, `userfaultfd`
-- **Module loading**: `init_module`, `finit_module`, `delete_module`
-- **Kernel keyring**: `add_key`, `request_key`, `keyctl`
-
-The profile allows ~200 syscalls required for normal Python execution (file I/O, networking, memory management, signals) while blocking privileged operations. This defense-in-depth approach complements Docker's other isolation mechanisms.
-
-### Security Considerations
-
-**What Tako VM protects against:**
-- ✅ **Container escape** - Docker namespace isolation + seccomp profile
-- ✅ **Resource exhaustion** - Memory, CPU, file size limits enforced
-- ✅ **API-level path traversal** - Strong path validation on artifact downloads
-- ✅ **Privilege escalation** - Non-root user + capability dropping + no-new-privileges
-
-**What user code has access to (by design):**
-- ⚠️ **Its own environment** - Configuration passed via env vars or files
-- ⚠️ **Process metadata** - Can read `/proc/self/` (standard Linux behavior)
-- ⚠️ **Input data** - Full access to `/input/` directory
-- ⚠️ **Output writes** - Full write access to `/output/`
-
-**This is expected behavior.** If code needs an API key to call an API, it will have access to that key. The question is not "can code access secrets?" but "should secrets be passed in job submission?"
-
-**Recommended security practices:**
-- ✅ **For your own code:** Current isolation is strong, env vars are fine
-- ✅ **For user-submitted code:** Add rate limiting and audit logging
-- ✅ **For untrusted/AI code:** Use external secret manager (AWS Secrets Manager, Vault), don't pass secrets in job submission
-
-**gVisor is the default runtime:**
-Tako VM uses gVisor (`runsc`) by default for strong isolation. Configure security modes:
+### Security modes
 
 ```yaml
 # Production (require gVisor)
@@ -539,16 +356,51 @@ security_mode: permissive
 container_runtime: runsc
 ```
 
-Or via environment variable for testing:
+See [docs/security/honest-assessment.md](docs/security/honest-assessment.md) for threat model analysis.
+
+## Development
+
+### Running tests
+
 ```bash
+# Clone and install
+git clone https://github.com/las7/TakoVM.git && cd TakoVM
+uv sync --all-extras
+docker build -t code-executor:latest -f docker/Dockerfile.executor .
+
+# Run tests without PostgreSQL (skips DB-dependent tests)
 TAKO_VM_SECURITY_MODE=permissive pytest tests/ -v
+
+# Run full test suite with PostgreSQL
+tako-vm dev up
+TAKO_VM_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/tako_vm \
+  TAKO_VM_SECURITY_MODE=permissive pytest tests/ -v
+
+# Lint
+ruff check tako_vm/ tests/
+ruff format --check tako_vm/ tests/
 ```
 
-**Additional isolation options:**
-- **AppArmor/SELinux** (Linux only) - Can block `/proc` reads if needed
-- **Kata Containers** - VM-level isolation for multi-tenant deployments
+### Docker images
 
-See [docs/security/honest-assessment.md](docs/security/honest-assessment.md) for detailed threat model analysis.
+Pre-built images are published to GHCR on every release:
+
+```bash
+# Executor (used by Sandbox to run code)
+docker pull ghcr.io/las7/takovm/executor:latest
+
+# Server (API server with all dependencies)
+docker pull ghcr.io/las7/takovm/server:latest
+```
+
+### Docker Compose
+
+For a full local stack (server + PostgreSQL):
+
+```bash
+docker compose up -d
+curl http://localhost:8000/health
+```
 
 ## Project Structure
 
@@ -557,7 +409,8 @@ tako-vm/
 ├── tako_vm/
 │   ├── server/              # HTTP API layer
 │   │   ├── app.py           # FastAPI application
-│   │   └── queue.py         # Worker pool & job queue
+│   │   ├── queue.py         # Worker pool & job queue
+│   │   └── limits.py        # Rate limiting & payload protection
 │   ├── execution/           # Docker execution layer
 │   │   ├── worker.py        # Container executor
 │   │   └── builder.py       # Image builder (for pre-built images)
@@ -566,15 +419,16 @@ tako-vm/
 │   ├── cli.py               # CLI entry point
 │   ├── config.py            # Pydantic configuration
 │   ├── models.py            # Data models
+│   ├── sandbox.py           # Direct Docker execution (library mode)
 │   ├── storage.py           # PostgreSQL persistence
 │   └── job_types.py         # Job type definitions
 ├── docker/
-│   ├── Dockerfile.executor  # Base executor image (with uv)
+│   ├── Dockerfile.executor  # Base executor image
 │   ├── Dockerfile.server    # API server image
-│   └── entrypoint.sh        # Container entrypoint (installs deps, runs code)
-├── tako_vm.yaml.example     # Example configuration
-├── demo.sh                  # Interactive demo script
-└── pyproject.toml           # Package definition
+│   └── entrypoint.sh        # Container entrypoint
+├── tests/                   # Test suite (230+ tests)
+├── docs/                    # Documentation
+└── tako_vm.yaml.example     # Example configuration
 ```
 
 ## License
