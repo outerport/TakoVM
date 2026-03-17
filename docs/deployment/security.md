@@ -302,7 +302,7 @@ Tako VM does NOT protect against:
 | Timing attacks | Execution time visible |
 
 For higher security, consider:
-- gVisor (default in Tako VM)
+- gVisor (supported by Tako VM)
 - Kata Containers
 - Dedicated execution hosts
 - VM-based isolation

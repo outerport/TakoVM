@@ -104,7 +104,7 @@ print(response.json())
                     └─────────────┘
 ```
 
-**Security:** Tako VM uses gVisor (runsc) by default for strong container isolation with a userspace kernel.
+**Security:** Tako VM supports gVisor (runsc) for strong container isolation with a userspace kernel. Defaults to `permissive` mode, which falls back to standard Docker (runc) if gVisor is not installed.
 
 ## Next Steps
 
