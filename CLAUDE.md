@@ -1,105 +1,78 @@
 # Tako VM
 
-Secure Python code execution in isolated Docker containers. REST API for sync/async job execution.
+Secure Python code execution in isolated Docker containers. Lets AI agents and platforms run untrusted code safely by sandboxing it behind a gVisor-backed container boundary. REST API for sync/async job execution, plus a Python SDK for library-mode usage.
+
+## Why gVisor?
+
+Docker alone shares the host kernel — a container escape gives root. gVisor intercepts syscalls in a userspace kernel (`runsc`), so even a kernel exploit stays inside the sandbox. This is the core security promise of Tako VM.
 
 ## Architecture
 
 ```
 tako_vm/
-├── server/app.py        # FastAPI routes
-├── server/queue.py      # WorkerPool, async jobs
-├── execution/worker.py  # CodeExecutor (runs Docker containers)
-├── execution/docker.py  # Docker utilities (container naming, cleanup)
-├── execution/builder.py # ContainerBuilder (for pre-built images)
-├── config.py            # Pydantic config (TakoVMConfig)
-├── models.py            # ExecutionRecord, JobStatus
-├── storage.py           # PostgreSQL persistence
+├── server/
+│   ├── app.py             # FastAPI routes
+│   ├── queue.py           # WorkerPool, async jobs
+│   ├── correlation.py     # Request correlation ID tracking
+│   └── limits.py          # Rate limiting
+├── execution/
+│   ├── worker.py          # CodeExecutor (runs Docker containers)
+│   ├── docker.py          # Docker utilities (container naming, cleanup)
+│   ├── builder.py         # ContainerBuilder (for pre-built images)
+│   ├── health.py          # Health checks
+│   └── retry.py           # Retry logic
+├── sdk/
+│   └── client.py          # Python SDK (library-mode client)
+├── cli.py                 # CLI entry point (`tako-vm` command)
+├── config.py              # Pydantic config (TakoVMConfig)
+├── constants.py           # Shared constants (UV_CACHE_VOLUME, etc.)
+├── job_types.py           # Job type registry
+├── models.py              # ExecutionRecord, JobStatus
+├── sandbox.py             # Direct Docker sandbox (library mode, no server)
+├── security.py            # Security utilities
+└── storage.py             # PostgreSQL persistence
 docker/
-├── Dockerfile.executor  # Base executor image (uv + gosu)
-├── Dockerfile.server    # API server image
-├── entrypoint.sh        # Installs deps at runtime, runs code as sandbox user, writes timing to /output/.tako_phase
-lima-gvisor.yaml         # Lima VM config for macOS/Windows development with gVisor
+├── Dockerfile.executor    # Base executor image (uv + gosu)
+├── Dockerfile.server      # API server image
+└── entrypoint.sh          # Installs deps, runs code as sandbox user, writes timing
+lima-gvisor.yaml           # Lima VM config for macOS dev with gVisor
 ```
 
 ## Key Concepts
 
-- **gVisor by default**: Uses `runsc` runtime for strong isolation (userspace kernel). Required in `strict` mode.
-- **Security modes**: `permissive` (default) allows fallback to runc; `strict` fails if gVisor unavailable
-- **Runtime deps**: Dependencies installed via `uv pip install` at container startup (fast!)
+- **Security modes**: `permissive` (default) falls back to runc; `strict` fails if gVisor unavailable
 - **ExecutionRecord** status: `queued`, `running`, `succeeded`, `failed`, `timeout`, `oom`, `cancelled`
-- **ExecutionRecord.timing**: Phase breakdown (startup, execution durations) from `/output/.tako_phase`
-- **Timeouts**: `startup_timeout` (dep install) vs `timeout` (code execution) - configured separately
 - **Queue job** status: `pending`, `running`, `completed` (different from ExecutionRecord)
-- **UV_CACHE_VOLUME**: Docker volume `tako-uv-cache` speeds up repeated installs
+- **Timeouts**: `startup_timeout` (dep install) vs `timeout` (code execution) — configured separately
+- **Runtime deps**: Installed via `uv pip install` at container startup; `UV_CACHE_VOLUME` speeds repeats
 - Tests use temp database via `TAKO_VM_DATA_DIR` env var for isolation
-
-## Code Quality
-
-**IMPORTANT**: Always run lint checks before completing any Python code changes.
-
-```bash
-# Run ruff linter (required before committing)
-ruff check tako_vm/ tests/
-
-# Auto-fix lint issues
-ruff check --fix tako_vm/ tests/
-
-# Format code
-ruff format tako_vm/ tests/
-```
-
-When modifying Python code:
-1. Run `ruff check` on changed files before considering the task complete
-2. Fix any lint errors before committing
-3. If lint errors cannot be resolved, explain why and get user approval
 
 ## Build & Test
 
 ```bash
-# One-time: install gVisor (required for production)
-# See: https://gvisor.dev/docs/user_guide/install/
-
-# One-time: build executor image
+# Build executor image (one-time)
 docker build -t code-executor:latest -f docker/Dockerfile.executor .
 
-# Run tests (use permissive mode if gVisor not installed)
+# Run tests
 TAKO_VM_SECURITY_MODE=permissive pytest tests/ -v
 
 # Start server
 tako-vm server --port 8000
 ```
 
-## Dependency Flow
+## Code Quality
 
-1. Job submitted with `job_type: "data-processing"` (has `requirements: [pandas, numpy]`)
-2. Worker passes requirements via `TAKO_REQUIREMENTS` env var
-3. Container starts, `entrypoint.sh` runs `uv pip install pandas numpy`
-4. Code runs as `sandbox` user (uid 1000) via `gosu`
-
-For network-isolated jobs with deps, use pre-built images:
-```bash
-tako-vm build job-type data-processing
-# Then set base_image in job type config
-```
-
-## Common Issues
-
-- **RuntimeUnavailableError: gVisor not available** -> Install gVisor: https://gvisor.dev/docs/user_guide/install/ or set `security_mode: permissive` for dev
-- **ImageNotFound: code-executor:latest** -> Build image first (see above)
-- **PostgreSQL migration/connection errors** -> Verify `database_url` and database reachability
-- **Test isolation** -> Use `reset_config()` and temp database pattern from `tests/test_api.py`
-- **Dep install fails (network)** -> Jobs with requirements need network; use pre-built for true isolation
-
-## Debugging
+Linting is handled automatically via a PostToolUse hook (`.claude/hooks/lint.sh`) that runs `ruff check --fix` and `ruff format` on changed Python files. To run manually:
 
 ```bash
-curl http://localhost:8000/health           # Health check
-curl http://localhost:8000/pool/stats       # Worker pool status
-curl http://localhost:8000/dlq/stats        # Dead letter queue
+ruff check tako_vm/ tests/
+ruff format tako_vm/ tests/
 ```
 
 ## References
 
-- [README.md](README.md) - Full docs, CLI commands, job types
-- [docs/api/rest.md](docs/api/rest.md) - API reference
-- [tako_vm.yaml.example](tako_vm.yaml.example) - Config options
+- [docs/development/troubleshooting.md](docs/development/troubleshooting.md) — Dependency flow, common issues, debugging endpoints
+- [docs/api/rest.md](docs/api/rest.md) — API reference
+- [docs/api/sdk.md](docs/api/sdk.md) — Python SDK reference
+- [tako_vm.yaml.example](tako_vm.yaml.example) — Config options
+- [README.md](README.md) — Full docs, CLI commands, job types
