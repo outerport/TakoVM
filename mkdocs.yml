@@ -46,6 +46,10 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
     - Configuration: getting-started/configuration.md
+  - Architecture: architecture.md
+  - API Reference:
+    - REST API: api/rest.md
+    - Python SDK: api/sdk.md
   - Guide:
     - Tutorial: guide/tutorial.md
     - Basic Execution: guide/basic-execution.md
@@ -53,10 +57,6 @@ nav:
     - Environments: guide/environments.md
     - Custom Libraries: guide/custom-libraries.md
     - Error Handling: guide/error-handling.md
-  - API Reference:
-    - REST API: api/rest.md
-    - Python SDK: api/sdk.md
-  - Architecture: architecture.md
   - Deployment:
     - How to Deploy: deployment/how-to-deploy.md
     - Production Setup: deployment/production.md
