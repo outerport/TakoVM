@@ -309,7 +309,7 @@ For higher security, consider:
 
 ## gVisor Runtime
 
-Tako VM uses gVisor (runsc) by default for strong container isolation. gVisor provides a userspace kernel that intercepts and emulates syscalls, adding a significant security boundary beyond standard Docker.
+Tako VM supports gVisor (runsc) for strong container isolation. gVisor provides a userspace kernel that intercepts and emulates syscalls, adding a significant security boundary beyond standard Docker. By default, Tako VM runs in `permissive` mode, which falls back to runc if gVisor is not installed.
 
 ### Why gVisor?
 
@@ -322,7 +322,7 @@ Tako VM uses gVisor (runsc) by default for strong container isolation. gVisor pr
 
 ### Installation
 
-gVisor is required for `strict` security mode (default). Install it following the [official gVisor installation guide](https://gvisor.dev/docs/user_guide/install/).
+gVisor is required for `strict` security mode. Install it following the [official gVisor installation guide](https://gvisor.dev/docs/user_guide/install/).
 
 **Ubuntu/Debian:**
 ```bash

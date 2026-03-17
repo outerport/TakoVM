@@ -45,7 +45,7 @@ print("Done!")
 The first run builds the Docker image automatically (~30 seconds one-time setup).
 
 !!! note "gVisor on Linux"
-    Tako VM uses gVisor by default for strong isolation. If gVisor is not installed, set `TAKO_VM_SECURITY_MODE=permissive` or configure `security_mode: permissive` in your config file. See [Security](../deployment/security.md#gvisor-runtime) for installation instructions.
+    Tako VM defaults to `permissive` mode, which falls back to runc if gVisor is not installed. For production, set `security_mode: strict` to require gVisor. See [Security](../deployment/security.md#gvisor-runtime) for installation instructions.
 
 ## Server Mode (For Production)
 

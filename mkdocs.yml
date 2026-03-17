@@ -1,10 +1,10 @@
 site_name: Tako VM
 site_description: Job queue infrastructure for Python AI agents
-site_url: https://tako-vm.dev
+site_url: https://las7.github.io/TakoVM/
 site_author: Tako VM
 
-repo_url: https://github.com/example/tako-vm
-repo_name: tako-vm
+repo_url: https://github.com/las7/TakoVM
+repo_name: TakoVM
 edit_uri: edit/main/docs/
 
 theme:
@@ -99,4 +99,4 @@ markdown_extensions:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/example/tako-vm
+      link: https://github.com/las7/TakoVM
