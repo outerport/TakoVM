@@ -29,16 +29,6 @@ curl -X POST http://localhost:8000/execute \
   -d '{"code": "print(1 + 1)"}'
 ```
 
-Or use as a library (no server needed): `pip install tako-vm`
-
-```python
-from tako_vm import Sandbox
-
-with Sandbox() as sb:
-    result = sb.run("print(1 + 1)")
-    print(result.stdout)  # "2"
-```
-
 ## Why Tako VM?
 
 Sandbox solutions like [e2b](https://e2b.dev) and [microsandbox](https://github.com/microsandbox/microsandbox) give you isolated code execution—but that's it. You still need to build:
