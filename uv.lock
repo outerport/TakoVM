@@ -1503,7 +1503,7 @@ server = [
 ]
 
 [package.dev-dependencies]
-dev = [
+tools = [
     { name = "pre-commit", version = "4.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pre-commit", version = "4.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "pyright" },
@@ -1532,7 +1532,7 @@ requires-dist = [
 provides-extras = ["server", "all", "dev", "docs"]
 
 [package.metadata.requires-dev]
-dev = [
+tools = [
     { name = "pre-commit", specifier = ">=4.3.0" },
     { name = "pyright", specifier = ">=1.1.408" },
 ]

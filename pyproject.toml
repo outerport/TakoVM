@@ -70,10 +70,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/tako-vm"
-Documentation = "https://github.com/example/tako-vm#readme"
-Repository = "https://github.com/example/tako-vm"
-Issues = "https://github.com/example/tako-vm/issues"
+Homepage = "https://github.com/las7/tako-vm"
+Documentation = "https://github.com/las7/tako-vm#readme"
+Repository = "https://github.com/las7/tako-vm"
+Issues = "https://github.com/las7/tako-vm/issues"
 
 [project.scripts]
 tako-vm = "tako_vm.cli:main"
@@ -110,7 +110,7 @@ markers = [
 ]
 
 [dependency-groups]
-dev = [
+tools = [
     "pre-commit>=4.3.0",
     "pyright>=1.1.408",
 ]
