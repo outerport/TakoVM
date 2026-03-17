@@ -36,13 +36,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag
-        id: version
+      - name: Extract version and repo
+        id: meta
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           MAJOR="${VERSION%%.*}"
+          REPO="${GITHUB_REPOSITORY,,}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -52,9 +54,9 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository }}/${{ matrix.image }}:latest
-            ghcr.io/${{ github.repository }}/${{ matrix.image }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository }}/${{ matrix.image }}:${{ steps.version.outputs.major }}
+            ghcr.io/${{ steps.meta.outputs.repo }}/${{ matrix.image }}:latest
+            ghcr.io/${{ steps.meta.outputs.repo }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ steps.meta.outputs.repo }}/${{ matrix.image }}:${{ steps.meta.outputs.major }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

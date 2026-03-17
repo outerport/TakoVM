@@ -179,8 +179,8 @@ class Sandbox:
             raise RuntimeError(
                 f"Docker image '{self.config.image}' not found. "
                 f"Either pull the pre-built image:\n"
-                f"  docker pull ghcr.io/las7/tako-vm/executor:latest && "
-                f"docker tag ghcr.io/las7/tako-vm/executor:latest {self.config.image}\n"
+                f"  docker pull ghcr.io/las7/takovm/executor:latest && "
+                f"docker tag ghcr.io/las7/takovm/executor:latest {self.config.image}\n"
                 f"Or clone the repo and build it:\n"
                 f"  git clone https://github.com/las7/tako-vm.git && "
                 f"cd tako-vm && docker build -t {self.config.image} -f docker/Dockerfile.executor ."
@@ -199,8 +199,8 @@ class Sandbox:
             raise RuntimeError(
                 f"Cannot auto-build image: tako-vm source directory not found. "
                 f"Either pull the pre-built image:\n"
-                f"  docker pull ghcr.io/las7/tako-vm/executor:latest && "
-                f"docker tag ghcr.io/las7/tako-vm/executor:latest {self.config.image}\n"
+                f"  docker pull ghcr.io/las7/takovm/executor:latest && "
+                f"docker tag ghcr.io/las7/takovm/executor:latest {self.config.image}\n"
                 f"Or clone the repo and build it:\n"
                 f"  git clone https://github.com/las7/tako-vm.git && "
                 f"cd tako-vm && docker build -t {self.config.image} -f docker/Dockerfile.executor ."
@@ -211,8 +211,8 @@ class Sandbox:
             raise RuntimeError(
                 f"Cannot auto-build image: Dockerfile not found at {dockerfile}. "
                 f"Either pull the pre-built image:\n"
-                f"  docker pull ghcr.io/las7/tako-vm/executor:latest && "
-                f"docker tag ghcr.io/las7/tako-vm/executor:latest {self.config.image}\n"
+                f"  docker pull ghcr.io/las7/takovm/executor:latest && "
+                f"docker tag ghcr.io/las7/takovm/executor:latest {self.config.image}\n"
                 f"Or clone the repo and build it:\n"
                 f"  git clone https://github.com/las7/tako-vm.git && "
                 f"cd tako-vm && docker build -t {self.config.image} -f docker/Dockerfile.executor ."
