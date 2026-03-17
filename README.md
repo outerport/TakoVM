@@ -15,7 +15,9 @@
 Run AI-generated code in isolated Docker containers with optional gVisor sandboxing.
 Job queues, retries, and execution history included.
 
-**[Documentation](https://las7.github.io/TakoVM/)** | **[Quick Start](https://las7.github.io/TakoVM/getting-started/quickstart/)** | **[API Reference](https://las7.github.io/TakoVM/api/rest/)**
+<p align="center">
+  <a href="https://las7.github.io/TakoVM/"><strong>Documentation</strong></a> · <a href="https://las7.github.io/TakoVM/getting-started/quickstart/"><strong>Quick Start</strong></a> · <a href="https://las7.github.io/TakoVM/api/rest/"><strong>API Reference</strong></a>
+</p>
 
 ```bash
 # Install (requires Docker + Python 3.9+)
