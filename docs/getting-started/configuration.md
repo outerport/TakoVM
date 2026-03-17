@@ -182,6 +182,9 @@ Job types define pre-configured execution environments:
 
 When you define a job type, Tako VM builds a Docker image with the specified packages pre-installed (`tako-vm-{name}:latest`).
 
+!!! warning "Security: Environment Variables"
+    If your job type config includes `environment` variables, be aware that user code can read them via `/proc/self/environ`. Never put secrets (API keys, tokens) in job type environment variables. See [Security Mitigations](../security/mitigations.md).
+
 ## Container Limits
 
 | Limit | Description | Default | Range |

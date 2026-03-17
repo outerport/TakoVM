@@ -178,6 +178,20 @@ result = tako_vm.send(func, input_data, timeout=None, job_type=None)
 - `ValidationError`: Invalid input/output types
 - `ExecutionError`: Execution failed
 
+!!! important "How `send()` works"
+    The function you pass to `send()` does **not** run locally. Instead:
+
+    1. The function's source code is extracted via `inspect.getsource()`
+    2. The input dataclass is serialized to JSON and written to `/input/data.json`
+    3. The code is sent to the Tako VM server and executed in an isolated Docker container
+    4. The output is deserialized back into your output dataclass
+
+    This means:
+
+    - **Do not reference local variables** outside the function — they won't exist in the container
+    - **Imports must be inside the function** or available in the container's Python environment
+    - **The return type annotation** determines how `/output/result.json` is parsed back
+
 ---
 
 ### `tako_vm.send_raw()`
