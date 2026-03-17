@@ -6,6 +6,7 @@ Loads configuration from YAML file with optional env var overrides.
 """
 
 import os
+from importlib.resources import files as _resource_files
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -398,7 +399,9 @@ class TakoVMConfig(BaseModel):
         if self.seccomp_profile_path_str:
             self._resolved_seccomp_profile_path = Path(self.seccomp_profile_path_str)
         else:
-            self._resolved_seccomp_profile_path = Path(__file__).parent / "seccomp_profile.json"
+            self._resolved_seccomp_profile_path = Path(
+                str(_resource_files("tako_vm").joinpath("seccomp_profile.json"))
+            )
 
         return self
 
