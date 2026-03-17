@@ -138,7 +138,9 @@ def main():
     elif args.command == "config":
         show_config(args)
     elif args.command == "version":
-        print("tako-vm 2.0.0")
+        from tako_vm import __version__
+
+        print(f"tako-vm {__version__}")
     else:
         parser.print_help()
         sys.exit(1)
