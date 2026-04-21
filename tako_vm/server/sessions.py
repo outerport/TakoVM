@@ -9,11 +9,17 @@ exposes four endpoints:
 - ``DELETE /sessions/{session_id}`` — kill and remove the container.
 - ``GET /sessions/{session_id}`` — introspect a session (for debugging).
 
-The workspace path supplied in ``POST /sessions`` is bind-mounted into
-the container. The server and the path must be reachable at the same
-absolute path on the host so the host Docker daemon can resolve it when
-the tako-server container spawns sandbox siblings — the
-``/tmp/tako-vm-workspace/...`` convention in ``docker-compose.yml``.
+Workspaces are the server's responsibility. Clients supply either an
+explicit ``workspace`` path (legacy / dev path) or an opaque ``scope``
+string like ``agent-skill:<uuid>`` and let the server derive the path
+itself. The server creates the directory, sets permissions, and
+bind-mounts it into the sandbox. The client never has to touch the
+filesystem on its side; it just gets the resolved ``workspace`` back
+in the response for any bookkeeping it wants to do.
+
+Both shapes currently require that the chosen path lives under one of
+the allowlisted prefixes that docker-compose mounts shared
+(host ↔ tako-server container) — see ``WORKSPACE_PREFIX_ALLOWLIST``.
 """
 
 from __future__ import annotations
@@ -42,6 +48,36 @@ from tako_vm.session import (
 logger = logging.getLogger(__name__)
 
 WORKSPACE_PREFIX_ALLOWLIST = ["/tmp/tako-vm-workspace", "/tmp/tako-vm-sessions"]
+
+# Scope → workspace path mapping. A scope is a short string the client
+# hands the server instead of a host path; the server picks where on
+# its own disk that scope's workspace lives. Format: "<type>:<id>".
+# Only ``agent-skill:<uuid>`` is recognised today; add cases as needed.
+AGENT_SKILL_WORKSPACE_ROOT = Path("/tmp/tako-vm-workspace/agents")
+ANONYMOUS_WORKSPACE_ROOT = Path("/tmp/tako-vm-sessions/anonymous")
+
+
+def resolve_scope_workspace(scope: str) -> Path:
+    """Turn a scope string into the host path the server will bind-mount.
+
+    ``agent-skill:<uuid>`` — per-skill durable workspace. One dir per
+    skill, shared across every session for that skill.
+
+    ``anonymous`` — throwaway workspace for unowned sessions. Server
+    allocates a fresh dir per call.
+    """
+    if scope == "anonymous":
+        return ANONYMOUS_WORKSPACE_ROOT / uuid.uuid4().hex
+    if scope.startswith("agent-skill:"):
+        skill_id = scope.split(":", 1)[1]
+        if not skill_id:
+            raise ValueError("agent-skill scope requires a non-empty id")
+        # Very conservative charset — no path traversal via the id.
+        safe = "".join(c for c in skill_id if c.isalnum() or c in "-_")
+        if safe != skill_id:
+            raise ValueError(f"agent-skill id has disallowed characters: {skill_id!r}")
+        return AGENT_SKILL_WORKSPACE_ROOT / skill_id
+    raise ValueError(f"Unknown scope: {scope!r}")
 
 
 @dataclass
@@ -161,11 +197,21 @@ def _validate_workspace(workspace: Path) -> None:
 
 
 class CreateSessionRequest(BaseModel):
-    workspace: str = Field(
-        ...,
+    scope: Optional[str] = Field(
+        default=None,
         description=(
-            "Absolute host path of the workspace, under "
-            "/tmp/tako-vm-workspace/ so the server can bind-mount it."
+            "Server-resolved workspace identifier (e.g. "
+            "``agent-skill:<uuid>`` or ``anonymous``). When set, the "
+            "server picks the workspace path itself and returns it in "
+            "the response. Mutually exclusive with ``workspace``."
+        ),
+    )
+    workspace: Optional[str] = Field(
+        default=None,
+        description=(
+            "Explicit absolute host path to use as the workspace, under "
+            "/tmp/tako-vm-workspace/ so the server can bind-mount it. "
+            "Legacy / dev path; prefer ``scope`` for new callers."
         ),
     )
     image: str = Field(default=DEFAULT_IMAGE)
@@ -217,9 +263,19 @@ def create_sessions_router(manager: SessionManager) -> APIRouter:
         status_code=201,
     )
     def create_session(req: CreateSessionRequest) -> CreateSessionResponse:
+        if (req.scope is None) == (req.workspace is None):
+            raise HTTPException(
+                status_code=400,
+                detail="exactly one of 'scope' or 'workspace' must be set",
+            )
         try:
+            if req.scope is not None:
+                workspace = resolve_scope_workspace(req.scope)
+            else:
+                # req.workspace is set (mypy: narrowed above)
+                workspace = Path(req.workspace)  # type: ignore[arg-type]
             record = manager.create(
-                workspace=Path(req.workspace),
+                workspace=workspace,
                 image=req.image,
                 memory_limit=req.memory_limit,
                 cpu_limit=req.cpu_limit,

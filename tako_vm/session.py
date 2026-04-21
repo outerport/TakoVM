@@ -259,16 +259,22 @@ class LocalTakoSession:
 class RemoteTakoSession:
     """Session backed by a tako-vm server over HTTP.
 
-    The server owns the sandbox container and does all Docker operations.
-    The client passes a workspace path that must be reachable by the
-    server at the same absolute path (this is the
-    ``/tmp/tako-vm-workspace/...`` shared-bind-mount convention from
-    ``docker-compose.yml``).
+    Two ways to specify where the sandbox's workspace lives:
+
+    - **Scope-based** (preferred): pass ``scope="agent-skill:<uuid>"`` (or
+      ``"anonymous"``) and the server picks the host path itself. The
+      client never touches the filesystem — it only reads the resolved
+      path back from the response.
+    - **Path-based** (legacy / dev): pass ``workspace=Path(...)`` with
+      an absolute host path. Both sides must be able to see that path
+      via the docker-compose shared bind mount. The client calls
+      ``ensure_workspace_writable`` on its side for dev convenience.
     """
 
     def __init__(
         self,
-        workspace: Path,
+        workspace: Optional[Path] = None,
+        scope: Optional[str] = None,
         server_url: str = DEFAULT_SERVER_URL,
         image: Optional[str] = None,
         memory_limit: Optional[str] = None,
@@ -278,7 +284,14 @@ class RemoteTakoSession:
         enable_cap_restrictions: Optional[bool] = None,
         request_timeout: float = 30.0,
     ) -> None:
-        self.workspace = workspace.resolve()
+        if (workspace is None) == (scope is None):
+            raise ValueError(
+                "RemoteTakoSession requires exactly one of 'workspace' or 'scope'"
+            )
+        # When scope is set, the resolved workspace is filled in by start()
+        # from the server's response.
+        self.workspace: Optional[Path] = workspace.resolve() if workspace else None
+        self.scope = scope
         self.server_url = server_url.rstrip("/")
         self.image = image
         self.memory_limit = memory_limit
@@ -308,15 +321,18 @@ class RemoteTakoSession:
     def start(self) -> None:
         if self.session_id is not None:
             return
-        # Ensure the workspace is writable by the sandbox user. The server
-        # sees the same path via the shared bind mount, so we prep it here
-        # on the client side.
-        ensure_workspace_writable(self.workspace)
 
-        payload: Dict[str, Any] = {
-            "workspace": str(self.workspace),
-            "workspace_mount": self.workspace_mount,
-        }
+        payload: Dict[str, Any] = {"workspace_mount": self.workspace_mount}
+        if self.scope is not None:
+            # Scope-based: server owns the workspace. Don't touch the FS.
+            payload["scope"] = self.scope
+        else:
+            # Path-based (legacy): client preps its side of the shared mount
+            # so writes from the sandbox user land with the right perms.
+            assert self.workspace is not None
+            ensure_workspace_writable(self.workspace)
+            payload["workspace"] = str(self.workspace)
+
         if self.image is not None:
             payload["image"] = self.image
         if self.memory_limit is not None:
@@ -336,6 +352,10 @@ class RemoteTakoSession:
         data = resp.json()
         self.session_id = data["session_id"]
         self.container_name = data.get("container_name")
+        # Server-resolved workspace always comes back in the response.
+        returned_ws = data.get("workspace")
+        if returned_ws is not None:
+            self.workspace = Path(returned_ws)
 
     def exec(
         self,
