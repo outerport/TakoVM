@@ -792,6 +792,15 @@ async def execute_code(request: ExecuteRequest):
             job_type=result.get("job_type"),
         )
 
+    except ValueError as e:
+        # Client-side errors (unknown job_type, code too large, etc.) —
+        # never silently swap to default isolation; surface as 400 so the
+        # caller can fix the request rather than running with a different
+        # security profile than they asked for.
+        logger.info("Job %s rejected: %s", job_id, str(e))
+        raise HTTPException(
+            status_code=400, detail=sanitize_error(str(e))
+        ) from e
     except Exception as e:
         logger.error("Job %s error: %s", job_id, str(e), exc_info=True)
         # Sanitize error message to avoid leaking sensitive info

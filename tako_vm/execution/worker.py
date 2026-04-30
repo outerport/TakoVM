@@ -48,6 +48,24 @@ logger = logging.getLogger(__name__)
 _gvisor_available: Optional[bool] = None
 
 
+def docker_image_exists(image_name: str) -> bool:
+    """Return True if `docker image inspect` finds the image locally.
+
+    Used to decide whether a job_type's pre-built image is available so
+    we can run with `network=none` and skip the runtime `uv pip install`
+    step (which would otherwise force `--network=bridge`).
+    """
+    try:
+        subprocess.run(
+            ["docker", "image", "inspect", image_name],
+            capture_output=True,
+            check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 def check_gvisor_available() -> bool:
     """
     Check if gVisor (runsc) runtime is available.
@@ -282,10 +300,11 @@ class CodeExecutor:
 
         job_type = self.registry.get(name)
         if job_type is None:
-            if self.config.production_mode:
-                raise ValueError(f"Job type '{name}' not found (production mode)")
-            logger.warning(f"Job type '{name}' not found, using default")
-            return DEFAULT_JOB_TYPE
+            # Never silently fall back to DEFAULT_JOB_TYPE when the caller
+            # named an explicit type. They may be relying on different
+            # isolation, resources, or dependencies than 'default' has, and
+            # silently swapping would weaken the contract they asked for.
+            raise ValueError(f"Job type {name!r} not found")
 
         return job_type
 
@@ -787,9 +806,22 @@ class CodeExecutor:
                 "exit_code": -1,
             }
 
-        # Determine which image to use
-        # Use custom base_image if specified, otherwise use default executor
-        # Dependencies are installed at runtime via TAKO_REQUIREMENTS env var
+        # Merge job_type requirements with extra_requirements
+        all_requirements = list(job_type.requirements) if job_type.requirements else []
+        if extra_requirements:
+            all_requirements.extend(extra_requirements)
+
+        # Determine which image to use.
+        # Order of preference:
+        #   1. job_type.base_image — explicit per-type override
+        #   2. The pre-built tako-vm-{name}:latest if it exists AND no
+        #      extra_requirements were passed at runtime (those couldn't
+        #      possibly be baked in). Using the pre-built image lets
+        #      network_enabled=false stay honored — no runtime uv install
+        #      means no need to drop to --network=bridge.
+        #   3. The default code-executor image (deps install at runtime
+        #      via TAKO_REQUIREMENTS in entrypoint.sh).
+        use_prebuilt = False
         if job_type.base_image:
             if not validate_docker_image(job_type.base_image):
                 return {
@@ -800,23 +832,29 @@ class CodeExecutor:
                     "exit_code": -1,
                 }
             image_name = job_type.base_image
+        elif not extra_requirements and docker_image_exists(job_type.image_name):
+            image_name = job_type.image_name
+            use_prebuilt = True
+            logger.debug(
+                "Using pre-built image %s for job type '%s' (network=%s)",
+                image_name,
+                job_type.name,
+                "bridge" if job_type.network_enabled else "none",
+            )
         else:
             image_name = self.docker_image
 
-        # Merge job_type requirements with extra_requirements
-        all_requirements = list(job_type.requirements) if job_type.requirements else []
-        if extra_requirements:
-            all_requirements.extend(extra_requirements)
-
-        # Check if runtime deps require network access
-        has_runtime_deps = bool(all_requirements)
+        # When using a pre-built image, deps are baked in — no runtime
+        # install step, no need for the uv cache mount, no need to relax
+        # network isolation.
+        has_runtime_deps = bool(all_requirements) and not use_prebuilt
         needs_network_for_deps = has_runtime_deps and not job_type.network_enabled
 
         if needs_network_for_deps:
             logger.warning(
                 f"Job type '{job_type.name}' has requirements but network_enabled=false. "
                 "Using bridge network for dependency installation. "
-                "For true network isolation, use pre-built images via 'tako-vm build'."
+                "For true network isolation, pre-build via POST /job-types/{name}/build."
             )
 
         # Generate container name for tracking (allows cleanup on timeout)
@@ -910,8 +948,9 @@ class CodeExecutor:
                 continue
             cmd.append(f"--env={key}={value}")
 
-        # Pass requirements for runtime installation via uv
-        if all_requirements:
+        # Pass requirements for runtime installation via uv. Skipped when
+        # we're using a pre-built image (deps already baked in).
+        if has_runtime_deps:
             # Check requirements limit to prevent env var overflow
             if len(all_requirements) > MAX_REQUIREMENTS:
                 logger.error(
