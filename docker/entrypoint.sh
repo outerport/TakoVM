@@ -33,9 +33,13 @@ if [ -n "$TAKO_REQUIREMENTS" ]; then
     TARGET_DIR="/tmp/site-packages"
     mkdir -p "$TARGET_DIR"
 
-    # Capture install result (don't exit on error yet so we can record timing)
+    # Capture uv's chatter (resolution + per-package "+ pkg==ver" lines) so
+    # it doesn't pollute the user-visible stdout. uv writes everything to
+    # stderr; on success we drop it, on failure we forward it so callers
+    # can see *why* installation failed.
+    DEP_LOG=$(mktemp)
     set +e
-    uv pip install --target "$TARGET_DIR" --link-mode=copy -r "$REQS_FILE" 2>&1
+    uv pip install --target "$TARGET_DIR" --link-mode=copy -r "$REQS_FILE" >"$DEP_LOG" 2>&1
     DEP_EXIT_CODE=$?
     set -e
 
@@ -50,12 +54,15 @@ if [ -n "$TAKO_REQUIREMENTS" ]; then
     echo "dep_install_ms=$((END_DEP - START_STARTUP))" >> "$PHASE_FILE"
     echo "dep_install_exit_code=$DEP_EXIT_CODE" >> "$PHASE_FILE"
 
-    # Exit if dep install failed
+    # Exit if dep install failed (forward captured log to stderr first).
     if [ $DEP_EXIT_CODE -ne 0 ]; then
+        cat "$DEP_LOG" >&2
+        rm -f "$DEP_LOG"
         echo "phase=failed" >> "$PHASE_FILE"
         echo "failed_phase=startup" >> "$PHASE_FILE"
         exit $DEP_EXIT_CODE
     fi
+    rm -f "$DEP_LOG"
 else
     echo "dep_install_started=false" >> "$PHASE_FILE"
     echo "dep_install_ms=0" >> "$PHASE_FILE"
