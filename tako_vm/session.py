@@ -261,7 +261,7 @@ class RemoteTakoSession:
 
     Two ways to specify where the sandbox's workspace lives:
 
-    - **Scope-based** (preferred): pass ``scope="agent-skill:<uuid>"`` (or
+    - **Scope-based** (preferred): pass ``scope="agent-session:<uuid>"`` (or
       ``"anonymous"``) and the server picks the host path itself. The
       client never touches the filesystem — it only reads the resolved
       path back from the response.

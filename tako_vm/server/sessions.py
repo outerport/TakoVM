@@ -11,7 +11,7 @@ exposes four endpoints:
 
 Workspaces are the server's responsibility. Clients supply either an
 explicit ``workspace`` path (legacy / dev path) or an opaque ``scope``
-string like ``agent-skill:<uuid>`` and let the server derive the path
+string like ``agent-session:<uuid>`` and let the server derive the path
 itself. The server creates the directory, sets permissions, and
 bind-mounts it into the sandbox. The client never has to touch the
 filesystem on its side; it just gets the resolved ``workspace`` back
@@ -52,31 +52,38 @@ WORKSPACE_PREFIX_ALLOWLIST = ["/tmp/tako-vm-workspace", "/tmp/tako-vm-sessions"]
 # Scope → workspace path mapping. A scope is a short string the client
 # hands the server instead of a host path; the server picks where on
 # its own disk that scope's workspace lives. Format: "<type>:<id>".
-# Only ``agent-skill:<uuid>`` is recognised today; add cases as needed.
-AGENT_SKILL_WORKSPACE_ROOT = Path("/tmp/tako-vm-workspace/agents")
+# Recognised scopes today:
+#  - ``agent-session:<uuid>`` — per-session workspace (one dir per
+#    AgentSession), so two conversations against the same skill don't
+#    trample each other's files.
+#  - ``anonymous`` — throwaway workspace for unowned sessions.
+AGENT_SESSION_WORKSPACE_ROOT = Path("/tmp/tako-vm-workspace/sessions")
 ANONYMOUS_WORKSPACE_ROOT = Path("/tmp/tako-vm-sessions/anonymous")
 
 
 def resolve_scope_workspace(scope: str) -> Path:
     """Turn a scope string into the host path the server will bind-mount.
 
-    ``agent-skill:<uuid>`` — per-skill durable workspace. One dir per
-    skill, shared across every session for that skill.
+    ``agent-session:<uuid>`` — per-session workspace. One dir per
+    AgentSession; isolated from other sessions even when they share a
+    skill.
 
     ``anonymous`` — throwaway workspace for unowned sessions. Server
     allocates a fresh dir per call.
     """
     if scope == "anonymous":
         return ANONYMOUS_WORKSPACE_ROOT / uuid.uuid4().hex
-    if scope.startswith("agent-skill:"):
-        skill_id = scope.split(":", 1)[1]
-        if not skill_id:
-            raise ValueError("agent-skill scope requires a non-empty id")
+    if scope.startswith("agent-session:"):
+        session_id = scope.split(":", 1)[1]
+        if not session_id:
+            raise ValueError("agent-session scope requires a non-empty id")
         # Very conservative charset — no path traversal via the id.
-        safe = "".join(c for c in skill_id if c.isalnum() or c in "-_")
-        if safe != skill_id:
-            raise ValueError(f"agent-skill id has disallowed characters: {skill_id!r}")
-        return AGENT_SKILL_WORKSPACE_ROOT / skill_id
+        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        if safe != session_id:
+            raise ValueError(
+                f"agent-session id has disallowed characters: {session_id!r}"
+            )
+        return AGENT_SESSION_WORKSPACE_ROOT / session_id
     raise ValueError(f"Unknown scope: {scope!r}")
 
 
@@ -201,7 +208,7 @@ class CreateSessionRequest(BaseModel):
         default=None,
         description=(
             "Server-resolved workspace identifier (e.g. "
-            "``agent-skill:<uuid>`` or ``anonymous``). When set, the "
+            "``agent-session:<uuid>`` or ``anonymous``). When set, the "
             "server picks the workspace path itself and returns it in "
             "the response. Mutually exclusive with ``workspace``."
         ),
