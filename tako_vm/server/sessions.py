@@ -53,26 +53,42 @@ WORKSPACE_PREFIX_ALLOWLIST = ["/tmp/tako-vm-workspace", "/tmp/tako-vm-sessions"]
 # hands the server instead of a host path; the server picks where on
 # its own disk that scope's workspace lives. Format: "<type>:<id>".
 # Recognised scopes today:
+#  - ``agent-persona:<uuid>`` — per-persona workspace, durable across
+#    every session linked to that persona (issue #1384).
 #  - ``agent-session:<uuid>`` — per-session workspace (one dir per
-#    AgentSession), so two conversations against the same skill don't
-#    trample each other's files.
+#    AgentSession), the fallback when no persona is linked (issue #1382).
 #  - ``anonymous`` — throwaway workspace for unowned sessions.
 AGENT_SESSION_WORKSPACE_ROOT = Path("/tmp/tako-vm-workspace/sessions")
+AGENT_PERSONA_WORKSPACE_ROOT = Path("/tmp/tako-vm-workspace/personas")
 ANONYMOUS_WORKSPACE_ROOT = Path("/tmp/tako-vm-sessions/anonymous")
 
 
 def resolve_scope_workspace(scope: str) -> Path:
     """Turn a scope string into the host path the server will bind-mount.
 
+    ``agent-persona:<uuid>`` — per-persona workspace. Durable across
+    every session linked to that persona, so the agent can read its
+    own SOUL/USER/OPERATING memory files from prior conversations.
+
     ``agent-session:<uuid>`` — per-session workspace. One dir per
     AgentSession; isolated from other sessions even when they share a
-    skill.
+    skill. The fallback when the session has no persona linked.
 
     ``anonymous`` — throwaway workspace for unowned sessions. Server
     allocates a fresh dir per call.
     """
     if scope == "anonymous":
         return ANONYMOUS_WORKSPACE_ROOT / uuid.uuid4().hex
+    if scope.startswith("agent-persona:"):
+        persona_id = scope.split(":", 1)[1]
+        if not persona_id:
+            raise ValueError("agent-persona scope requires a non-empty id")
+        safe = "".join(c for c in persona_id if c.isalnum() or c in "-_")
+        if safe != persona_id:
+            raise ValueError(
+                f"agent-persona id has disallowed characters: {persona_id!r}"
+            )
+        return AGENT_PERSONA_WORKSPACE_ROOT / persona_id
     if scope.startswith("agent-session:"):
         session_id = scope.split(":", 1)[1]
         if not session_id:
