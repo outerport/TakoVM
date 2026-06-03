@@ -43,8 +43,10 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from tako_vm.config import get_config
 from tako_vm.constants import DEFAULT_IMAGE
 from tako_vm.execution.docker import generate_container_name, kill_container
+from tako_vm.execution.worker import resolve_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,7 @@ def build_session_docker_command(
     network_enabled: bool,
     workspace_mount: str,
     enable_cap_restrictions: bool,
+    runtime: Optional[str] = None,
 ) -> List[str]:
     """Assemble the ``docker run -d`` command for a session container.
 
@@ -90,6 +93,12 @@ def build_session_docker_command(
         "--user=1000:1000",
         "--entrypoint=/bin/sleep",
     ]
+    # Apply gVisor explicitly. runc is docker's default (and some daemons
+    # reject ``--runtime=runc``), so we only pass the flag for runsc --
+    # mirroring CodeExecutor._run_container. Without this, session containers
+    # run under the host kernel (runc) regardless of strict mode.
+    if runtime == "runsc":
+        cmd.append(f"--runtime={runtime}")
     if enable_cap_restrictions:
         cmd.append("--cap-drop=ALL")
     cmd.append("--network=bridge" if network_enabled else "--network=none")
@@ -205,6 +214,7 @@ class LocalTakoSession:
             return
         ensure_workspace_writable(self.workspace)
         self.container_name = generate_container_name("tako-session")
+        runtime = resolve_runtime(get_config())
         cmd = build_session_docker_command(
             container_name=self.container_name,
             workspace=self.workspace,
@@ -214,6 +224,7 @@ class LocalTakoSession:
             network_enabled=self.network_enabled,
             workspace_mount=self.workspace_mount,
             enable_cap_restrictions=self.enable_cap_restrictions,
+            runtime=runtime,
         )
         logger.debug("Starting session container: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)

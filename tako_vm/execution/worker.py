@@ -200,6 +200,61 @@ def determine_timeout_phase(timing: Optional[ExecutionTiming], timed_out: bool) 
     return None
 
 
+def resolve_runtime(config: TakoVMConfig) -> str:
+    """Resolve the container runtime ('runsc' or 'runc') from config.
+
+    Shared by CodeExecutor (stateless ``/execute``) and the session path
+    (``build_session_docker_command``) so both apply gVisor identically --
+    the single source of truth that keeps the two paths from drifting on
+    runtime selection.
+
+    In strict mode gVisor must be available or this raises; in permissive
+    mode (the default ``security_mode``) it falls back to runc with a loud
+    warning. ``container_runtime`` defaults to ``runsc``, so gVisor is
+    *requested* by default but only *enforced* in strict mode.
+
+    Raises:
+        RuntimeUnavailableError: strict mode and gVisor unavailable, or runc
+            explicitly requested under strict mode.
+    """
+    requested_runtime = config.container_runtime
+    security_mode = config.security_mode
+
+    # If runc is explicitly requested, allow it (user knows what they're doing)
+    if requested_runtime == "runc":
+        if security_mode == "strict":
+            raise RuntimeUnavailableError(
+                "Cannot use 'runc' runtime in strict security mode. "
+                "Use container_runtime='runsc' or set security_mode='permissive'."
+            )
+        logger.warning(
+            "Using 'runc' runtime. This provides weaker isolation than gVisor. "
+            "DO NOT USE FOR UNTRUSTED CODE."
+        )
+        return "runc"
+
+    # gVisor requested (default) - check availability
+    if check_gvisor_available():
+        logger.info("Using gVisor (runsc) runtime for strong isolation")
+        return "runsc"
+
+    # gVisor not available
+    if security_mode == "strict":
+        raise RuntimeUnavailableError(
+            "gVisor (runsc) runtime is not available but required in strict mode. "
+            "Install gVisor: https://gvisor.dev/docs/user_guide/install/ "
+            "Or set security_mode='permissive' to allow fallback to runc (NOT RECOMMENDED)."
+        )
+
+    # Permissive mode - fall back to runc with loud warning
+    logger.warning("=" * 60)
+    logger.warning("WARNING: gVisor not available, falling back to runc")
+    logger.warning("WARNING: This provides WEAKER ISOLATION")
+    logger.warning("WARNING: DO NOT USE FOR UNTRUSTED CODE")
+    logger.warning("=" * 60)
+    return "runc"
+
+
 class CodeExecutor:
     """Execute Python code in isolated Docker containers."""
 
@@ -231,54 +286,8 @@ class CodeExecutor:
         self._runtime = self._resolve_runtime()
 
     def _resolve_runtime(self) -> str:
-        """
-        Resolve the container runtime to use.
-
-        In strict mode (default), gVisor must be available or we fail.
-        In permissive mode, we fall back to runc with a warning.
-
-        Returns:
-            The runtime to use ('runsc' or 'runc')
-
-        Raises:
-            RuntimeUnavailableError: If strict mode and gVisor unavailable
-        """
-        requested_runtime = self.config.container_runtime
-        security_mode = self.config.security_mode
-
-        # If runc is explicitly requested, allow it (user knows what they're doing)
-        if requested_runtime == "runc":
-            if security_mode == "strict":
-                raise RuntimeUnavailableError(
-                    "Cannot use 'runc' runtime in strict security mode. "
-                    "Use container_runtime='runsc' or set security_mode='permissive'."
-                )
-            logger.warning(
-                "Using 'runc' runtime. This provides weaker isolation than gVisor. "
-                "DO NOT USE FOR UNTRUSTED CODE."
-            )
-            return "runc"
-
-        # gVisor requested (default) - check availability
-        if check_gvisor_available():
-            logger.info("Using gVisor (runsc) runtime for strong isolation")
-            return "runsc"
-
-        # gVisor not available
-        if security_mode == "strict":
-            raise RuntimeUnavailableError(
-                "gVisor (runsc) runtime is not available but required in strict mode. "
-                "Install gVisor: https://gvisor.dev/docs/user_guide/install/ "
-                "Or set security_mode='permissive' to allow fallback to runc (NOT RECOMMENDED)."
-            )
-
-        # Permissive mode - fall back to runc with loud warning
-        logger.warning("=" * 60)
-        logger.warning("WARNING: gVisor not available, falling back to runc")
-        logger.warning("WARNING: This provides WEAKER ISOLATION")
-        logger.warning("WARNING: DO NOT USE FOR UNTRUSTED CODE")
-        logger.warning("=" * 60)
-        return "runc"
+        """Resolve the runtime via the shared resolver (see ``resolve_runtime``)."""
+        return resolve_runtime(self.config)
 
     def _get_job_type(self, job_type_name: Optional[str]) -> JobType:
         """
