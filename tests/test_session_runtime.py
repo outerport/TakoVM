@@ -149,3 +149,30 @@ class TestSessionStartAppliesRuntime:
         with pytest.raises(RuntimeUnavailableError):
             LocalTakoSession(workspace=tmp_path).start()
         assert started["run"] is False  # no container ever started
+
+    def test_start_uses_explicit_container_name(self, monkeypatch, tmp_path):
+        """A caller-supplied name is used verbatim (not a generated one) so a
+        remote driver can kill the container by a name it knew before start()
+        returned."""
+        monkeypatch.setattr(worker_module, "_gvisor_available", True)
+        monkeypatch.setenv("TAKO_VM_SECURITY_MODE", "permissive")
+        reset_config()
+
+        captured = {}
+
+        def fake_run(cmd, *args, **kwargs):
+            captured["cmd"] = cmd
+
+            class _Result:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return _Result()
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        session = LocalTakoSession(workspace=tmp_path, container_name="roaming-deadbeef")
+        session.start()
+        assert session.container_name == "roaming-deadbeef"
+        assert "--name=roaming-deadbeef" in captured["cmd"]

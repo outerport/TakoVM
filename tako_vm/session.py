@@ -169,8 +169,7 @@ def ensure_workspace_writable(workspace: Path) -> None:
         os.chmod(workspace, 0o777)
     except PermissionError:
         logger.warning(
-            "Could not chmod workspace %s to 0777; writes from the "
-            "sandbox user may fail.",
+            "Could not chmod workspace %s to 0777; writes from the sandbox user may fail.",
             workspace,
         )
 
@@ -191,6 +190,7 @@ class LocalTakoSession:
         network_enabled: bool = False,
         workspace_mount: str = DEFAULT_WORKSPACE_MOUNT,
         enable_cap_restrictions: bool = True,
+        container_name: Optional[str] = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.image = image
@@ -199,6 +199,11 @@ class LocalTakoSession:
         self.network_enabled = network_enabled
         self.workspace_mount = workspace_mount
         self.enable_cap_restrictions = enable_cap_restrictions
+        # When the caller supplies a name, start() uses it instead of a
+        # generated one -- letting the caller kill the container by a name it
+        # already knows even if start() never returns (e.g. a queue/result
+        # timeout in a remote driver).
+        self._container_name_override = container_name
         self.container_name: Optional[str] = None
         self._started = False
 
@@ -213,7 +218,9 @@ class LocalTakoSession:
         if self._started:
             return
         ensure_workspace_writable(self.workspace)
-        self.container_name = generate_container_name("tako-session")
+        self.container_name = self._container_name_override or generate_container_name(
+            "tako-session"
+        )
         runtime = resolve_runtime(get_config())
         cmd = build_session_docker_command(
             container_name=self.container_name,
@@ -229,9 +236,7 @@ class LocalTakoSession:
         logger.debug("Starting session container: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to start session container: {result.stderr.strip()}"
-            )
+            raise RuntimeError(f"Failed to start session container: {result.stderr.strip()}")
         self._started = True
 
     def exec(
@@ -244,9 +249,7 @@ class LocalTakoSession:
         if not self._started or self.container_name is None:
             raise RuntimeError("Session is not started; call start() first")
         working_dir = cwd if cwd is not None else self.workspace_mount
-        return run_docker_exec(
-            self.container_name, command, working_dir, timeout, env
-        )
+        return run_docker_exec(self.container_name, command, working_dir, timeout, env)
 
     def stop(self) -> None:
         if not self._started:
@@ -296,9 +299,7 @@ class RemoteTakoSession:
         request_timeout: float = 30.0,
     ) -> None:
         if (workspace is None) == (scope is None):
-            raise ValueError(
-                "RemoteTakoSession requires exactly one of 'workspace' or 'scope'"
-            )
+            raise ValueError("RemoteTakoSession requires exactly one of 'workspace' or 'scope'")
         # When scope is set, the resolved workspace is filled in by start()
         # from the server's response.
         self.workspace: Optional[Path] = workspace.resolve() if workspace else None
@@ -324,9 +325,7 @@ class RemoteTakoSession:
 
     def _http(self) -> httpx.Client:
         if self._client is None:
-            self._client = httpx.Client(
-                base_url=self.server_url, timeout=self.request_timeout
-            )
+            self._client = httpx.Client(base_url=self.server_url, timeout=self.request_timeout)
         return self._client
 
     def start(self) -> None:
@@ -357,9 +356,7 @@ class RemoteTakoSession:
 
         resp = self._http().post("/sessions", json=payload)
         if resp.status_code >= 400:
-            raise RuntimeError(
-                f"Failed to create session ({resp.status_code}): {resp.text}"
-            )
+            raise RuntimeError(f"Failed to create session ({resp.status_code}): {resp.text}")
         data = resp.json()
         self.session_id = data["session_id"]
         self.container_name = data.get("container_name")
@@ -388,9 +385,7 @@ class RemoteTakoSession:
             timeout=timeout + self.request_timeout,
         )
         if resp.status_code >= 400:
-            raise RuntimeError(
-                f"exec failed ({resp.status_code}): {resp.text}"
-            )
+            raise RuntimeError(f"exec failed ({resp.status_code}): {resp.text}")
         data = resp.json()
         return SessionExecResult(
             stdout=data.get("stdout", ""),
