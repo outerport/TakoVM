@@ -35,8 +35,10 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from tako_vm.config import get_config
 from tako_vm.constants import DEFAULT_IMAGE
 from tako_vm.execution.docker import generate_container_name, kill_container
+from tako_vm.execution.worker import resolve_runtime
 from tako_vm.session import (
     DEFAULT_SESSION_TIMEOUT,
     DEFAULT_WORKSPACE_MOUNT,
@@ -120,6 +122,7 @@ class SessionManager:
 
         session_id = uuid.uuid4().hex
         container_name = generate_container_name("tako-session")
+        runtime = resolve_runtime(get_config())
         cmd = build_session_docker_command(
             container_name=container_name,
             workspace=workspace,
@@ -129,6 +132,7 @@ class SessionManager:
             network_enabled=network_enabled,
             workspace_mount=workspace_mount,
             enable_cap_restrictions=enable_cap_restrictions,
+            runtime=runtime,
         )
         logger.info(
             "Starting session %s (container=%s, workspace=%s)",
