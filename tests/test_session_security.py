@@ -37,7 +37,9 @@ from tako_vm.server.sessions import (
 from tako_vm.session import (
     MAX_OUTPUT_CHARS,
     build_session_docker_command,
+    ensure_workspace_writable,
     run_docker_exec,
+    session_ulimits,
 )
 
 
@@ -388,3 +390,127 @@ def test_isolation_flags_come_from_config(monkeypatch):
     )
     assert "--runtime=runsc" in captured["cmd"]
     assert "--cap-drop=ALL" in captured["cmd"]
+
+
+# ---------------------------------------------------------------------------
+# Mount-spec injection — the workspace_mount host-escape (CRITICAL)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "evil_mount",
+    [
+        "/workspace,source=/etc",  # re-point bind source to host /etc
+        "/workspace,source=/var/run",  # ...or to the docker socket dir -> root
+        "/workspace,readonly",  # toggle mount options
+        "/work space",  # space
+        "relative/path",  # not absolute
+        "/work=space",  # '=' is a --mount kv separator
+    ],
+)
+def test_workspace_mount_injection_rejected(evil_mount):
+    # A comma/'='/space in the target must never reach the --mount string,
+    # or it can inject a second source= and mount an arbitrary host path.
+    with pytest.raises(ValueError):
+        build_session_docker_command(
+            "c",
+            Path("/tmp/tako-vm-workspace/x"),
+            DEFAULT_IMAGE,
+            "512m",
+            1.0,
+            False,
+            evil_mount,
+            True,
+        )
+
+
+def test_mount_source_with_comma_rejected():
+    with pytest.raises(ValueError):
+        build_session_docker_command(
+            "c",
+            Path("/tmp/ws,source=/etc"),
+            DEFAULT_IMAGE,
+            "512m",
+            1.0,
+            False,
+            "/workspace",
+            True,
+        )
+
+
+def test_normal_mount_still_builds_single_mount_flag():
+    cmd = build_session_docker_command(
+        "c",
+        Path("/tmp/tako-vm-workspace/ok"),
+        DEFAULT_IMAGE,
+        "512m",
+        1.0,
+        False,
+        "/workspace",
+        True,
+    )
+    mounts = [a for a in cmd if a.startswith("--mount=")]
+    assert mounts == ["--mount=type=bind,source=/tmp/tako-vm-workspace/ok,target=/workspace"]
+
+
+def test_ulimits_appended_when_provided():
+    cmd = build_session_docker_command(
+        "c",
+        Path("/ws"),
+        DEFAULT_IMAGE,
+        "512m",
+        1.0,
+        False,
+        "/workspace",
+        True,
+        ulimits=["--ulimit=nofile=256:256", "--ulimit=nproc=50:50"],
+    )
+    assert "--ulimit=nofile=256:256" in cmd
+    assert "--ulimit=nproc=50:50" in cmd
+
+
+def test_session_ulimits_from_config():
+    ulimits = session_ulimits(_permissive_config())
+    assert any(u.startswith("--ulimit=nofile=") for u in ulimits)
+    assert any(u.startswith("--ulimit=nproc=") for u in ulimits)
+    assert any(u.startswith("--ulimit=fsize=") for u in ulimits)
+
+
+# ---------------------------------------------------------------------------
+# exec: cwd / env validation (parity with /execute)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_cwd", ["/etc,source=/x", "relative", "/foo;bar", "/a b"])
+def test_exec_rejects_bad_cwd(bad_cwd):
+    with pytest.raises(ValueError):
+        run_docker_exec("c", "echo hi", bad_cwd, timeout=5)
+
+
+def test_exec_rejects_dangerous_env(monkeypatch):
+    # Should reject before ever invoking docker.
+    called = {"ran": False}
+
+    def fake_run(*a, **k):
+        called["ran"] = True
+
+    monkeypatch.setattr(session_mod.subprocess, "run", fake_run)
+    with pytest.raises(ValueError):
+        run_docker_exec("c", "echo hi", "/workspace", timeout=5, env={"X": "$(id)"})
+    with pytest.raises(ValueError):
+        run_docker_exec("c", "echo hi", "/workspace", timeout=5, env={"bad key": "v"})
+    assert called["ran"] is False
+
+
+# ---------------------------------------------------------------------------
+# Workspace symlink guard
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_workspace_writable_rejects_symlink(tmp_path):
+    target = tmp_path / "real"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    with pytest.raises(ValueError):
+        ensure_workspace_writable(link)

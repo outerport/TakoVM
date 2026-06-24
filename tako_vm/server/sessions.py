@@ -52,13 +52,14 @@ from tako_vm.config import TakoVMConfig, get_config
 from tako_vm.constants import DEFAULT_IMAGE
 from tako_vm.execution.docker import generate_container_name, kill_container
 from tako_vm.execution.worker import RuntimeUnavailableError, resolve_runtime
-from tako_vm.security import validate_docker_image
+from tako_vm.security import sanitize_error, validate_docker_image
 from tako_vm.session import (
     DEFAULT_SESSION_TIMEOUT,
     DEFAULT_WORKSPACE_MOUNT,
     build_session_docker_command,
     ensure_workspace_writable,
     run_docker_exec,
+    session_ulimits,
 )
 
 logger = logging.getLogger(__name__)
@@ -269,6 +270,7 @@ class SessionManager:
             runtime=runtime,
             enable_seccomp=config.enable_seccomp,
             seccomp_profile_path=seccomp_path,
+            ulimits=session_ulimits(config),
         )
         logger.info(
             "Starting session %s (container=%s, workspace=%s, runtime=%s, network=%s)",
@@ -280,7 +282,8 @@ class SessionManager:
         )
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise RuntimeError(f"docker run failed: {result.stderr.strip()}")
+            # Sanitize: raw daemon stderr can leak host paths / image internals.
+            raise RuntimeError(f"docker run failed: {sanitize_error(result.stderr.strip())}")
 
         record = _SessionRecord(
             session_id=session_id,
@@ -504,13 +507,17 @@ def create_sessions_router(manager: SessionManager) -> APIRouter:
         if record is None:
             raise HTTPException(status_code=404, detail="session not found")
         cwd = req.cwd if req.cwd is not None else record.workspace_mount
-        result = run_docker_exec(
-            container_name=record.container_name,
-            command=req.command,
-            cwd=cwd,
-            timeout=req.timeout,
-            env=req.env,
-        )
+        try:
+            result = run_docker_exec(
+                container_name=record.container_name,
+                command=req.command,
+                cwd=cwd,
+                timeout=req.timeout,
+                env=req.env,
+            )
+        except ValueError as e:
+            # Invalid cwd / env (e.g. injection attempt) — reject, don't 500.
+            raise HTTPException(status_code=400, detail=str(e))
         return ExecResponse(
             stdout=result.stdout,
             stderr=result.stderr,

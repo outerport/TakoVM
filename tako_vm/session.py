@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -49,8 +50,48 @@ from tako_vm.execution.docker import (
     is_native_linux,
     kill_container,
 )
+from tako_vm.security import validate_env_key, validate_env_value
 
 logger = logging.getLogger(__name__)
+
+# Absolute container path with a conservative charset. Critically this
+# forbids the comma and ``=`` that Docker's ``--mount=k=v,k=v`` syntax uses:
+# without this, a ``workspace_mount`` (or cwd) like
+# ``/workspace,source=/var/run`` would inject an extra ``source=`` key into the
+# --mount spec and re-point the bind mount to an arbitrary HOST path (e.g. the
+# Docker socket → host root). The validated workspace source is otherwise
+# meaningless if the target can override it.
+_SAFE_CONTAINER_PATH = re.compile(r"^/[A-Za-z0-9._\-/]*$")
+
+
+def _validate_container_path(value: str, field: str) -> None:
+    """Reject a container path that could inject docker mount/flag options."""
+    if not value or not _SAFE_CONTAINER_PATH.match(value):
+        raise ValueError(
+            f"{field} must be an absolute path matching {_SAFE_CONTAINER_PATH.pattern!r}; "
+            f"got {value!r}"
+        )
+
+
+def _validate_mount_source(value: str) -> None:
+    """Reject a bind-mount source that could inject extra --mount keys."""
+    if "," in value or "=" in value:
+        raise ValueError(f"workspace path contains disallowed characters: {value!r}")
+
+
+def session_ulimits(config: Any) -> List[str]:
+    """Build the ``--ulimit`` flags from config, mirroring the executor.
+
+    Sessions otherwise set only ``--pids-limit``; the executor also bounds
+    open files, processes (per-uid), and file size.
+    """
+    limits = config.container_limits
+    return [
+        f"--ulimit=nofile={limits.nofile_soft}:{limits.nofile_hard}",
+        f"--ulimit=nproc={limits.nproc_soft}:{limits.nproc_hard}",
+        f"--ulimit=fsize={limits.fsize}",
+    ]
+
 
 DEFAULT_WORKSPACE_MOUNT = "/workspace"
 DEFAULT_SESSION_TIMEOUT = 60
@@ -96,11 +137,18 @@ def build_session_docker_command(
     enable_seccomp: bool = False,
     seccomp_profile_path: Optional[Path] = None,
     no_new_privileges: bool = True,
+    ulimits: Optional[List[str]] = None,
 ) -> List[str]:
     """Assemble the ``docker run -d`` command for a session container.
 
     Shared by the local backend and the server-side session manager so
     both end up with identical sandbox semantics.
+
+    ``workspace_mount`` (the in-container target) and ``workspace`` (the
+    host source) are validated to forbid the comma/``=`` that Docker's
+    ``--mount=k=v,...`` syntax uses, so neither can inject extra mount keys
+    (e.g. a second ``source=`` that re-points the bind mount at an arbitrary
+    host path such as the Docker socket).
 
     ``runtime`` is the resolved container runtime ('runsc' for gVisor,
     'runc' otherwise). It must be resolved by the caller via
@@ -116,6 +164,10 @@ def build_session_docker_command(
     needed. That also lets us add ``--security-opt=no-new-privileges``,
     which the executor path can't use because gosu needs setuid.
     """
+    # Validate everything that flows into the --mount spec BEFORE building it.
+    _validate_container_path(workspace_mount, "workspace_mount")
+    _validate_mount_source(str(workspace))
+
     cmd = [
         "docker",
         "run",
@@ -142,6 +194,9 @@ def build_session_docker_command(
         else:
             logger.debug("Skipping custom seccomp profile (not native Linux or missing)")
     cmd.append("--network=bridge" if network_enabled else "--network=none")
+    # ulimits (nofile/nproc/fsize) for parity with the one-shot executor.
+    if ulimits:
+        cmd.extend(ulimits)
     cmd.extend(
         [
             f"--memory={memory_limit}",
@@ -180,10 +235,20 @@ def run_docker_exec(
     running (orphaned miner/scanner). The host-side timeout is kept as a
     backstop, set above the in-container one so the container limit fires
     first and we still capture partial output.
+
+    ``cwd`` and ``env`` are validated for parity with the one-shot executor:
+    ``cwd`` must be a safe absolute path, and env keys/values must pass the
+    same ``validate_env_key``/``validate_env_value`` checks (rejecting
+    control chars, ``$``/backticks/backslashes, oversized values).
     """
+    _validate_container_path(cwd, "cwd")
     exec_cmd: List[str] = ["docker", "exec", "-w", cwd]
     if env:
         for k, v in env.items():
+            if not validate_env_key(k):
+                raise ValueError(f"invalid env key: {k!r}")
+            if not validate_env_value(v):
+                raise ValueError(f"invalid env value for {k!r}")
             exec_cmd.extend(["-e", f"{k}={v}"])
     # ``timeout --kill-after`` escalates to SIGKILL if the command ignores
     # SIGTERM. ``--`` guards against a command that looks like an option.
@@ -237,7 +302,13 @@ def ensure_workspace_writable(workspace: Path) -> None:
 
     The image runs as uid 1000. For local dev we chmod 0o777; production
     should set up UID remapping or match host/container UIDs.
+
+    Refuses to operate through a symlink so a pre-planted symlink under the
+    workspace root can't redirect the ``mkdir``/``chmod`` (or the later bind
+    mount) at a path outside the allowlist.
     """
+    if workspace.is_symlink():
+        raise ValueError(f"Workspace must not be a symlink: {workspace}")
     if not workspace.exists():
         workspace.mkdir(parents=True)
     if not workspace.is_dir():
@@ -312,6 +383,7 @@ class LocalTakoSession:
             runtime=runtime,
             enable_seccomp=config.enable_seccomp,
             seccomp_profile_path=seccomp_path,
+            ulimits=session_ulimits(config),
         )
         logger.debug("Starting session container: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
