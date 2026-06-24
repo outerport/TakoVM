@@ -78,6 +78,15 @@ echo "phase=execution" >> "$PHASE_FILE"
 START_EXEC=$(get_time_ms)
 echo "execution_start_ms=$START_EXEC" >> "$PHASE_FILE"
 
+# Redirect library cache/config dirs onto the writable /tmp tmpfs. The root
+# filesystem is mounted --read-only and the sandbox user's HOME (/home/sandbox)
+# lives there, so any library that wants $HOME/.cache (ezdxf, matplotlib,
+# fontconfig, ...) would otherwise fail to create it and warn on every run.
+export XDG_CACHE_HOME=/tmp/.cache
+export MPLCONFIGDIR=/tmp/.cache/matplotlib
+mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
+chmod -R 777 /tmp/.cache
+
 # Drop privileges and run user code as sandbox user
 # Using exec replaces this process, so we need a wrapper to capture timing
 gosu sandbox python -u /code/main.py
