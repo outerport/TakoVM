@@ -82,10 +82,13 @@ echo "execution_start_ms=$START_EXEC" >> "$PHASE_FILE"
 # filesystem is mounted --read-only and the sandbox user's HOME (/home/sandbox)
 # lives there, so any library that wants $HOME/.cache (ezdxf, matplotlib,
 # fontconfig, ...) would otherwise fail to create it and warn on every run.
+# gosu preserves the environment, so both vars reach the Python process below.
+# Created as container root, so hand ownership to the sandbox user (uid 1000)
+# since the code below runs unprivileged.
 export XDG_CACHE_HOME=/tmp/.cache
 export MPLCONFIGDIR=/tmp/.cache/matplotlib
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
-chmod -R 777 /tmp/.cache
+chown -R sandbox:sandbox "$XDG_CACHE_HOME"
 
 # Drop privileges and run user code as sandbox user
 # Using exec replaces this process, so we need a wrapper to capture timing
