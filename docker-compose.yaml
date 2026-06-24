@@ -17,12 +17,21 @@ services:
     image: tako-vm-server:latest
     container_name: tako-vm
     ports:
-      - "8000:8000"
+      # The API accepts arbitrary code/commands and has no auth of its own,
+      # so bind to loopback only — its trust boundary is the host, not the
+      # network. Put a TLS-terminating authenticated proxy in front to expose
+      # it. (Containers on the same compose network reach it via DNS, not the
+      # host port.)
+      - "127.0.0.1:8000:8000"
     volumes:
       # Docker socket for spawning executor containers
       - /var/run/docker.sock:/var/run/docker.sock
       # Shared workspace for job files (must match host path for Docker mounts)
       - /tmp/tako-vm-jobs:/tmp/tako-vm-jobs
+      # Shared workspace for long-lived sessions. Bind-mounted at the SAME
+      # absolute path on both sides so the host Docker daemon can resolve the
+      # sibling sandbox container's mount (see WORKSPACE_PREFIX_ALLOWLIST).
+      - /tmp/tako-vm-workspace:/tmp/tako-vm-workspace
       # Config with scaled worker settings (16 workers, 500 queue)
       - ./tako_vm.yaml:/app/tako_vm.yaml:ro
       # Optional: persist data
