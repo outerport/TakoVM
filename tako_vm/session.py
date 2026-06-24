@@ -44,13 +44,32 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from tako_vm.constants import DEFAULT_IMAGE
-from tako_vm.execution.docker import generate_container_name, kill_container
+from tako_vm.execution.docker import (
+    generate_container_name,
+    is_native_linux,
+    kill_container,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WORKSPACE_MOUNT = "/workspace"
 DEFAULT_SESSION_TIMEOUT = 60
 DEFAULT_SERVER_URL = os.environ.get("TAKO_SERVER_URL", "http://localhost:8000")
+
+# Cap the stdout/stderr we return from a single exec so a runaway command
+# (``yes``, an infinite log loop) can't balloon the server's response or the
+# caller's memory. The command itself is still bounded by the in-container
+# ``timeout`` wrapper; this bounds the *output volume* we hand back.
+MAX_OUTPUT_CHARS = 1_000_000
+
+# Host-side ``subprocess`` timeout is set a little above the in-container
+# ``timeout`` so the container-side limit fires first (killing the process
+# tree) and we still capture whatever it produced, instead of the host
+# client timing out while the in-container process keeps running.
+EXEC_HOST_TIMEOUT_BUFFER = 10
+
+# Exit code GNU coreutils ``timeout`` uses when it has to kill the command.
+_TIMEOUT_EXIT_CODE = 124
 
 
 @dataclass
@@ -73,11 +92,29 @@ def build_session_docker_command(
     network_enabled: bool,
     workspace_mount: str,
     enable_cap_restrictions: bool,
+    runtime: str = "runc",
+    enable_seccomp: bool = False,
+    seccomp_profile_path: Optional[Path] = None,
+    no_new_privileges: bool = True,
 ) -> List[str]:
     """Assemble the ``docker run -d`` command for a session container.
 
     Shared by the local backend and the server-side session manager so
     both end up with identical sandbox semantics.
+
+    ``runtime`` is the resolved container runtime ('runsc' for gVisor,
+    'runc' otherwise). It must be resolved by the caller via
+    :func:`tako_vm.execution.worker.resolve_runtime` so a session honors
+    the same ``container_runtime`` / ``security_mode`` policy as the
+    one-shot ``/execute`` path — otherwise a session would silently run
+    under runc on a gVisor host. Only ``runsc`` is passed explicitly;
+    runc is Docker's default and some daemons reject ``--runtime=runc``.
+
+    Unlike the one-shot executor, a session drops *all* capabilities with
+    no ``--cap-add`` for gosu: the container's entrypoint is ``/bin/sleep``
+    and every ``exec`` runs directly as uid 1000, so no setuid step is
+    needed. That also lets us add ``--security-opt=no-new-privileges``,
+    which the executor path can't use because gosu needs setuid.
     """
     cmd = [
         "docker",
@@ -90,8 +127,20 @@ def build_session_docker_command(
         "--user=1000:1000",
         "--entrypoint=/bin/sleep",
     ]
+    # Only specify the runtime explicitly for gVisor; runc is the default.
+    if runtime == "runsc":
+        cmd.append("--runtime=runsc")
     if enable_cap_restrictions:
         cmd.append("--cap-drop=ALL")
+    if no_new_privileges:
+        cmd.append("--security-opt=no-new-privileges")
+    # Apply the seccomp profile on native Linux only — Docker Desktop and
+    # some CI runners reject custom profiles. Mirrors CodeExecutor.
+    if enable_seccomp and seccomp_profile_path is not None:
+        if is_native_linux() and Path(seccomp_profile_path).exists():
+            cmd.append(f"--security-opt=seccomp={seccomp_profile_path}")
+        else:
+            logger.debug("Skipping custom seccomp profile (not native Linux or missing)")
     cmd.append("--network=bridge" if network_enabled else "--network=none")
     cmd.extend(
         [
@@ -108,6 +157,13 @@ def build_session_docker_command(
     return cmd
 
 
+def _truncate_output(text: str) -> str:
+    """Cap a single stream to ``MAX_OUTPUT_CHARS`` with a visible marker."""
+    if len(text) <= MAX_OUTPUT_CHARS:
+        return text
+    return text[:MAX_OUTPUT_CHARS] + f"\n...[truncated, {len(text)} chars total]"
+
+
 def run_docker_exec(
     container_name: str,
     command: str,
@@ -115,31 +171,61 @@ def run_docker_exec(
     timeout: int,
     env: Optional[Dict[str, str]] = None,
 ) -> SessionExecResult:
-    """Run ``docker exec ... bash -c "command"`` and return the result."""
+    """Run ``command`` inside the session container and return the result.
+
+    The command is wrapped in the container-side ``timeout`` coreutil so a
+    runaway/backgrounded process is killed *inside* the container when the
+    deadline passes. Without this, a host-side ``subprocess`` timeout only
+    kills the ``docker exec`` client while the in-container process keeps
+    running (orphaned miner/scanner). The host-side timeout is kept as a
+    backstop, set above the in-container one so the container limit fires
+    first and we still capture partial output.
+    """
     exec_cmd: List[str] = ["docker", "exec", "-w", cwd]
     if env:
         for k, v in env.items():
             exec_cmd.extend(["-e", f"{k}={v}"])
-    exec_cmd.extend([container_name, "bash", "-c", command])
+    # ``timeout --kill-after`` escalates to SIGKILL if the command ignores
+    # SIGTERM. ``--`` guards against a command that looks like an option.
+    exec_cmd.extend(
+        [
+            container_name,
+            "timeout",
+            "--kill-after=5s",
+            "--signal=TERM",
+            f"{timeout}s",
+            "bash",
+            "-c",
+            command,
+        ]
+    )
 
     start = time.time()
     try:
         proc = subprocess.run(
-            exec_cmd, capture_output=True, text=True, timeout=timeout, check=False
+            exec_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + EXEC_HOST_TIMEOUT_BUFFER,
+            check=False,
         )
         duration_ms = int((time.time() - start) * 1000)
         return SessionExecResult(
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=_truncate_output(proc.stdout),
+            stderr=_truncate_output(proc.stderr),
             exit_code=proc.returncode,
             duration_ms=duration_ms,
-            timed_out=False,
+            timed_out=proc.returncode == _TIMEOUT_EXIT_CODE,
         )
     except subprocess.TimeoutExpired as e:
+        # Backstop: the container-side timeout didn't return in time. The
+        # in-container process tree is already being torn down by ``timeout``.
         duration_ms = int((time.time() - start) * 1000)
+        out = e.stdout.decode("utf-8", "replace") if e.stdout else ""
+        err = e.stderr.decode("utf-8", "replace") if e.stderr else ""
         return SessionExecResult(
-            stdout=e.stdout.decode("utf-8", "replace") if e.stdout else "",
-            stderr=e.stderr.decode("utf-8", "replace") if e.stderr else "",
+            stdout=_truncate_output(out),
+            stderr=_truncate_output(err),
             exit_code=-1,
             duration_ms=duration_ms,
             timed_out=True,
@@ -160,8 +246,7 @@ def ensure_workspace_writable(workspace: Path) -> None:
         os.chmod(workspace, 0o777)
     except PermissionError:
         logger.warning(
-            "Could not chmod workspace %s to 0777; writes from the "
-            "sandbox user may fail.",
+            "Could not chmod workspace %s to 0777; writes from the sandbox user may fail.",
             workspace,
         )
 
@@ -205,6 +290,16 @@ class LocalTakoSession:
             return
         ensure_workspace_writable(self.workspace)
         self.container_name = generate_container_name("tako-session")
+        # Resolve the runtime + seccomp the same way the one-shot executor
+        # does, so a local session gets gVisor when the host/config provides
+        # it instead of silently running under runc. Imported lazily to keep
+        # ``tako_vm`` package import (which pulls in this module) light.
+        from tako_vm.config import get_config
+        from tako_vm.execution.worker import resolve_runtime
+
+        config = get_config()
+        runtime = resolve_runtime(config)
+        seccomp_path = config.seccomp_profile_path if config.enable_seccomp else None
         cmd = build_session_docker_command(
             container_name=self.container_name,
             workspace=self.workspace,
@@ -214,13 +309,14 @@ class LocalTakoSession:
             network_enabled=self.network_enabled,
             workspace_mount=self.workspace_mount,
             enable_cap_restrictions=self.enable_cap_restrictions,
+            runtime=runtime,
+            enable_seccomp=config.enable_seccomp,
+            seccomp_profile_path=seccomp_path,
         )
         logger.debug("Starting session container: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to start session container: {result.stderr.strip()}"
-            )
+            raise RuntimeError(f"Failed to start session container: {result.stderr.strip()}")
         self._started = True
 
     def exec(
@@ -233,9 +329,7 @@ class LocalTakoSession:
         if not self._started or self.container_name is None:
             raise RuntimeError("Session is not started; call start() first")
         working_dir = cwd if cwd is not None else self.workspace_mount
-        return run_docker_exec(
-            self.container_name, command, working_dir, timeout, env
-        )
+        return run_docker_exec(self.container_name, command, working_dir, timeout, env)
 
     def stop(self) -> None:
         if not self._started:
@@ -285,9 +379,7 @@ class RemoteTakoSession:
         request_timeout: float = 30.0,
     ) -> None:
         if (workspace is None) == (scope is None):
-            raise ValueError(
-                "RemoteTakoSession requires exactly one of 'workspace' or 'scope'"
-            )
+            raise ValueError("RemoteTakoSession requires exactly one of 'workspace' or 'scope'")
         # When scope is set, the resolved workspace is filled in by start()
         # from the server's response.
         self.workspace: Optional[Path] = workspace.resolve() if workspace else None
@@ -313,9 +405,7 @@ class RemoteTakoSession:
 
     def _http(self) -> httpx.Client:
         if self._client is None:
-            self._client = httpx.Client(
-                base_url=self.server_url, timeout=self.request_timeout
-            )
+            self._client = httpx.Client(base_url=self.server_url, timeout=self.request_timeout)
         return self._client
 
     def start(self) -> None:
@@ -346,9 +436,7 @@ class RemoteTakoSession:
 
         resp = self._http().post("/sessions", json=payload)
         if resp.status_code >= 400:
-            raise RuntimeError(
-                f"Failed to create session ({resp.status_code}): {resp.text}"
-            )
+            raise RuntimeError(f"Failed to create session ({resp.status_code}): {resp.text}")
         data = resp.json()
         self.session_id = data["session_id"]
         self.container_name = data.get("container_name")
@@ -377,9 +465,7 @@ class RemoteTakoSession:
             timeout=timeout + self.request_timeout,
         )
         if resp.status_code >= 400:
-            raise RuntimeError(
-                f"exec failed ({resp.status_code}): {resp.text}"
-            )
+            raise RuntimeError(f"exec failed ({resp.status_code}): {resp.text}")
         data = resp.json()
         return SessionExecResult(
             stdout=data.get("stdout", ""),

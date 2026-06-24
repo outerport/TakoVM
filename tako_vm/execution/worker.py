@@ -103,6 +103,58 @@ class RuntimeUnavailableError(Exception):
     """Raised when the required container runtime is not available."""
 
 
+def resolve_runtime(config: Any) -> str:
+    """Resolve the container runtime ('runsc' or 'runc') for ``config``.
+
+    Honors ``container_runtime`` + ``security_mode`` exactly like
+    :meth:`CodeExecutor._resolve_runtime`. Extracted as a module-level
+    function so the session plane (``tako_vm.session`` /
+    ``tako_vm.server.sessions``) resolves the runtime the *same* way the
+    one-shot ``/execute`` path does — otherwise sessions would silently
+    run under runc on a gVisor-provisioned host.
+
+    Raises:
+        RuntimeUnavailableError: in strict mode when gVisor is unavailable
+        (or when runc is explicitly requested under strict mode).
+    """
+    requested_runtime = config.container_runtime
+    security_mode = config.security_mode
+
+    # If runc is explicitly requested, allow it (user knows what they're doing)
+    if requested_runtime == "runc":
+        if security_mode == "strict":
+            raise RuntimeUnavailableError(
+                "Cannot use 'runc' runtime in strict security mode. "
+                "Use container_runtime='runsc' or set security_mode='permissive'."
+            )
+        logger.warning(
+            "Using 'runc' runtime. This provides weaker isolation than gVisor. "
+            "DO NOT USE FOR UNTRUSTED CODE."
+        )
+        return "runc"
+
+    # gVisor requested (default) - check availability
+    if check_gvisor_available():
+        logger.info("Using gVisor (runsc) runtime for strong isolation")
+        return "runsc"
+
+    # gVisor not available
+    if security_mode == "strict":
+        raise RuntimeUnavailableError(
+            "gVisor (runsc) runtime is not available but required in strict mode. "
+            "Install gVisor: https://gvisor.dev/docs/user_guide/install/ "
+            "Or set security_mode='permissive' to allow fallback to runc (NOT RECOMMENDED)."
+        )
+
+    # Permissive mode - fall back to runc with loud warning
+    logger.warning("=" * 60)
+    logger.warning("WARNING: gVisor not available, falling back to runc")
+    logger.warning("WARNING: This provides WEAKER ISOLATION")
+    logger.warning("WARNING: DO NOT USE FOR UNTRUSTED CODE")
+    logger.warning("=" * 60)
+    return "runc"
+
+
 # Default job type for backward compatibility
 DEFAULT_JOB_TYPE = JobType(
     name="default",
@@ -243,42 +295,7 @@ class CodeExecutor:
         Raises:
             RuntimeUnavailableError: If strict mode and gVisor unavailable
         """
-        requested_runtime = self.config.container_runtime
-        security_mode = self.config.security_mode
-
-        # If runc is explicitly requested, allow it (user knows what they're doing)
-        if requested_runtime == "runc":
-            if security_mode == "strict":
-                raise RuntimeUnavailableError(
-                    "Cannot use 'runc' runtime in strict security mode. "
-                    "Use container_runtime='runsc' or set security_mode='permissive'."
-                )
-            logger.warning(
-                "Using 'runc' runtime. This provides weaker isolation than gVisor. "
-                "DO NOT USE FOR UNTRUSTED CODE."
-            )
-            return "runc"
-
-        # gVisor requested (default) - check availability
-        if check_gvisor_available():
-            logger.info("Using gVisor (runsc) runtime for strong isolation")
-            return "runsc"
-
-        # gVisor not available
-        if security_mode == "strict":
-            raise RuntimeUnavailableError(
-                "gVisor (runsc) runtime is not available but required in strict mode. "
-                "Install gVisor: https://gvisor.dev/docs/user_guide/install/ "
-                "Or set security_mode='permissive' to allow fallback to runc (NOT RECOMMENDED)."
-            )
-
-        # Permissive mode - fall back to runc with loud warning
-        logger.warning("=" * 60)
-        logger.warning("WARNING: gVisor not available, falling back to runc")
-        logger.warning("WARNING: This provides WEAKER ISOLATION")
-        logger.warning("WARNING: DO NOT USE FOR UNTRUSTED CODE")
-        logger.warning("=" * 60)
-        return "runc"
+        return resolve_runtime(self.config)
 
     def _get_job_type(self, job_type_name: Optional[str]) -> JobType:
         """
