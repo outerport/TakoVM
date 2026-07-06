@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -339,7 +340,10 @@ class CodeExecutor:
                 - error: Error message (if failed)
                 - job_type: Name of job type used
         """
-        job_id = job.get("id", str(int(time.time() * 1000)))
+        # The id becomes the container name, which must be unique on the
+        # daemon. A bare millisecond timestamp collides when jobs race within
+        # the same millisecond, so append a random suffix to the fallback.
+        job_id = job.get("id") or f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
 
         # Get job type configuration
         job_type = self._get_job_type(job.get("job_type"))
