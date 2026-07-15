@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from tako_vm.config import get_config
-from tako_vm.constants import DEFAULT_IMAGE
+from tako_vm.constants import DEFAULT_IMAGE, SANDBOX_GID, SANDBOX_UID
 from tako_vm.execution.docker import generate_container_name, kill_container
 from tako_vm.execution.worker import resolve_runtime
 
@@ -90,7 +90,7 @@ def build_session_docker_command(
         f"--name={container_name}",
         "--init",
         "--read-only",
-        "--user=1000:1000",
+        f"--user={SANDBOX_UID}:{SANDBOX_GID}",
         "--entrypoint=/bin/sleep",
     ]
     # Apply gVisor explicitly. runc is docker's default (and some daemons
@@ -156,20 +156,47 @@ def run_docker_exec(
 
 
 def ensure_workspace_writable(workspace: Path) -> None:
-    """Make the workspace writable by the sandbox user (uid 1000).
+    """Make the workspace usable by the sandbox user (uid SANDBOX_UID).
 
-    The image runs as uid 1000. For local dev we chmod 0o777; production
-    should set up UID remapping or match host/container UIDs.
+    The container runs as SANDBOX_UID:SANDBOX_GID, but files placed into the
+    workspace on the *host* (workspace hydrate, the fs_write / fs_edit roaming
+    tools) are written by the worker process, which typically runs as root.
+    A root-owned 0644 file cannot be overwritten (or chmod-ed) by the uid-1000
+    container, which is what breaks cross-turn notebook/script re-writes.
+
+    Reconcile the two by giving the workspace directory the sandbox group and
+    the setgid bit: every file/subdirectory created inside it then inherits
+    ``gid == SANDBOX_GID`` regardless of which process writes it. Combined with
+    the worker running at umask 002 (so host writes are group-writable, 0664),
+    the sandbox uid — a member of SANDBOX_GID — can read, overwrite, and delete
+    every workspace file. setgid propagates into nested directories on Linux,
+    so this one call at session creation covers the whole tree.
     """
     if not workspace.exists():
         workspace.mkdir(parents=True)
     if not workspace.is_dir():
         raise ValueError(f"Workspace is not a directory: {workspace}")
     try:
-        os.chmod(workspace, 0o777)
+        # chgrp to the sandbox group (leave the owner untouched). Only a
+        # privileged worker can set a group it isn't a member of; when the
+        # worker already runs as the sandbox uid this is a no-op it's allowed
+        # to make. Best-effort: dev setups running the worker as the sandbox
+        # user already produce sandbox-owned files.
+        os.chown(workspace, -1, SANDBOX_GID)
+    except (PermissionError, OSError):
+        logger.warning(
+            "Could not chgrp workspace %s to gid %d; host-written files may not "
+            "be group-writable by the sandbox user.",
+            workspace,
+            SANDBOX_GID,
+        )
+    try:
+        # setgid (02000) + rwx for owner/group/other. The setgid bit is the
+        # load-bearing part; 0o777 keeps local-dev permissive.
+        os.chmod(workspace, 0o2777)
     except PermissionError:
         logger.warning(
-            "Could not chmod workspace %s to 0777; writes from the sandbox user may fail.",
+            "Could not chmod workspace %s to 2777; writes from the sandbox user may fail.",
             workspace,
         )
 
