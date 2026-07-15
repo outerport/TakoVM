@@ -8,6 +8,14 @@ across worker, sandbox, and other modules.
 import os
 import tempfile
 
+# Sandbox user/group the executor image runs as (docker/Dockerfile.executor
+# creates it; session containers launch with --user=SANDBOX_UID:SANDBOX_GID).
+# Single source of truth: the container --user AND the host-side workspace
+# group-ownership both derive from these, so code that runs inside the sandbox
+# and code that prepares the workspace on the host agree on one identity.
+SANDBOX_UID = 1000
+SANDBOX_GID = 1000
+
 # Docker image for code execution
 DEFAULT_IMAGE = "code-executor:latest"
 

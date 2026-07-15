@@ -45,9 +45,13 @@ class ContainerLimits(BaseModel):
     nofile_soft: int = Field(default=256, ge=64, le=65536)
     nofile_hard: int = Field(default=256, ge=64, le=65536)
 
-    # Process limits
-    nproc_soft: int = Field(default=50, ge=10, le=1000)
-    nproc_hard: int = Field(default=50, ge=10, le=1000)
+    # Process limits.
+    # nproc is enforced per-UID system-wide, so the container's sandbox user
+    # (uid 1000) shares its budget with the host's uid-1000 user. Dev hosts
+    # often have >1000 threads under uid 1000 (browser, IDE, shells), which
+    # makes the historical 1000 cap unreachable in practice.
+    nproc_soft: int = Field(default=50, ge=10, le=8192)
+    nproc_hard: int = Field(default=50, ge=10, le=8192)
 
     # Max file size in bytes (default 100MB)
     fsize: int = Field(default=104857600, ge=1048576, le=1073741824)

@@ -58,12 +58,25 @@ from tako_vm.sdk.client import (
     send,
     send_raw,
 )
+from tako_vm.session import (
+    DEFAULT_SERVER_URL,
+    LocalTakoSession,
+    RemoteTakoSession,
+    SessionExecResult,
+    TakoSession,
+)
 
 __all__ = [
     # Sandbox (library-first interface)
     "Sandbox",
     "SandboxResult",
     "sandbox_run",
+    # Long-lived session (for roaming agents)
+    "TakoSession",
+    "LocalTakoSession",
+    "RemoteTakoSession",
+    "SessionExecResult",
+    "DEFAULT_SERVER_URL",
     # Main SDK functions
     "send",
     "send_raw",

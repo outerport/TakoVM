@@ -7,6 +7,9 @@ Tests container naming, cleanup, and platform detection.
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import tako_vm.execution.worker as worker_module
+from tako_vm.config import TakoVMConfig
+from tako_vm.execution import CodeExecutor
 from tako_vm.execution.docker import (
     generate_container_name,
     is_native_linux,
@@ -102,6 +105,63 @@ class TestKillContainer:
 
         # Should not raise
         kill_container("error-container")
+
+
+class TestConcurrentIdlessJobNaming:
+    """A job's container name is derived from its id, and jobs submitted
+    without an id must still get unique containers under concurrency.
+
+    The id-less fallback derives an id from the wall clock, so two jobs
+    created close together can resolve the same instant. Each must still
+    map to a distinct container name -- otherwise the second ``docker run``
+    fails with a name conflict and the job is lost.
+    """
+
+    def _executor(self, monkeypatch):
+        # Treat gVisor as available so the executor resolves a runtime without
+        # a real runsc install; no container is ever launched (see below).
+        monkeypatch.setattr(worker_module, "_gvisor_available", True)
+        return CodeExecutor(config=TakoVMConfig(container_runtime="runsc", security_mode="strict"))
+
+    def test_idless_jobs_at_same_instant_get_unique_container_names(self, monkeypatch):
+        executor = self._executor(monkeypatch)
+
+        # Freeze the wall clock so both jobs resolve to the same instant --
+        # the collision the fallback must survive.
+        monkeypatch.setattr(worker_module.time, "time", lambda: 1000.5)
+
+        seen_job_ids = []
+
+        def capture(**kwargs):
+            seen_job_ids.append(kwargs["job_id"])
+            return {"success": True, "stdout": "", "stderr": "", "exit_code": 0}
+
+        monkeypatch.setattr(executor, "_run_container", capture)
+
+        job = {"code": "print('x')", "input_data": {}}
+        executor.execute_job(dict(job))
+        executor.execute_job(dict(job))
+
+        assert len(seen_job_ids) == 2
+        container_names = {generate_container_name("tako", jid) for jid in seen_job_ids}
+        assert len(container_names) == 2, container_names
+
+    def test_explicit_job_id_is_used_verbatim(self, monkeypatch):
+        """An explicitly supplied id is still honoured unchanged, so callers
+        that reuse an id for idempotency/tracking keep that behaviour."""
+        executor = self._executor(monkeypatch)
+
+        captured = {}
+
+        def capture(**kwargs):
+            captured["job_id"] = kwargs["job_id"]
+            return {"success": True, "stdout": "", "stderr": "", "exit_code": 0}
+
+        monkeypatch.setattr(executor, "_run_container", capture)
+
+        executor.execute_job({"id": "explicit-123", "code": "print('x')", "input_data": {}})
+
+        assert captured["job_id"] == "explicit-123"
 
 
 class TestContainerNameValidation:

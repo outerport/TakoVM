@@ -41,6 +41,10 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "psycopg-pool>=3.2.0",
     "pyyaml>=6.0",
+    # httpx powers the RemoteTakoSession HTTP client (tako_vm/session.py).
+    # Core because RemoteTakoSession is exported from tako_vm/__init__.py
+    # and the import happens at package load time.
+    "httpx>=0.24.0",
 ]
 
 [project.optional-dependencies]

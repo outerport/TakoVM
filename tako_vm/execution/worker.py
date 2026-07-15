@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -46,6 +47,24 @@ logger = logging.getLogger(__name__)
 
 # Cache for runtime availability check
 _gvisor_available: Optional[bool] = None
+
+
+def docker_image_exists(image_name: str) -> bool:
+    """Return True if `docker image inspect` finds the image locally.
+
+    Used to decide whether a job_type's pre-built image is available so
+    we can run with `network=none` and skip the runtime `uv pip install`
+    step (which would otherwise force `--network=bridge`).
+    """
+    try:
+        subprocess.run(
+            ["docker", "image", "inspect", image_name],
+            capture_output=True,
+            check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 
 def check_gvisor_available() -> bool:
@@ -182,6 +201,61 @@ def determine_timeout_phase(timing: Optional[ExecutionTiming], timed_out: bool) 
     return None
 
 
+def resolve_runtime(config: TakoVMConfig) -> str:
+    """Resolve the container runtime ('runsc' or 'runc') from config.
+
+    Shared by CodeExecutor (stateless ``/execute``) and the session path
+    (``build_session_docker_command``) so both apply gVisor identically --
+    the single source of truth that keeps the two paths from drifting on
+    runtime selection.
+
+    In strict mode gVisor must be available or this raises; in permissive
+    mode (the default ``security_mode``) it falls back to runc with a loud
+    warning. ``container_runtime`` defaults to ``runsc``, so gVisor is
+    *requested* by default but only *enforced* in strict mode.
+
+    Raises:
+        RuntimeUnavailableError: strict mode and gVisor unavailable, or runc
+            explicitly requested under strict mode.
+    """
+    requested_runtime = config.container_runtime
+    security_mode = config.security_mode
+
+    # If runc is explicitly requested, allow it (user knows what they're doing)
+    if requested_runtime == "runc":
+        if security_mode == "strict":
+            raise RuntimeUnavailableError(
+                "Cannot use 'runc' runtime in strict security mode. "
+                "Use container_runtime='runsc' or set security_mode='permissive'."
+            )
+        logger.warning(
+            "Using 'runc' runtime. This provides weaker isolation than gVisor. "
+            "DO NOT USE FOR UNTRUSTED CODE."
+        )
+        return "runc"
+
+    # gVisor requested (default) - check availability
+    if check_gvisor_available():
+        logger.info("Using gVisor (runsc) runtime for strong isolation")
+        return "runsc"
+
+    # gVisor not available
+    if security_mode == "strict":
+        raise RuntimeUnavailableError(
+            "gVisor (runsc) runtime is not available but required in strict mode. "
+            "Install gVisor: https://gvisor.dev/docs/user_guide/install/ "
+            "Or set security_mode='permissive' to allow fallback to runc (NOT RECOMMENDED)."
+        )
+
+    # Permissive mode - fall back to runc with loud warning
+    logger.warning("=" * 60)
+    logger.warning("WARNING: gVisor not available, falling back to runc")
+    logger.warning("WARNING: This provides WEAKER ISOLATION")
+    logger.warning("WARNING: DO NOT USE FOR UNTRUSTED CODE")
+    logger.warning("=" * 60)
+    return "runc"
+
+
 class CodeExecutor:
     """Execute Python code in isolated Docker containers."""
 
@@ -213,54 +287,8 @@ class CodeExecutor:
         self._runtime = self._resolve_runtime()
 
     def _resolve_runtime(self) -> str:
-        """
-        Resolve the container runtime to use.
-
-        In strict mode (default), gVisor must be available or we fail.
-        In permissive mode, we fall back to runc with a warning.
-
-        Returns:
-            The runtime to use ('runsc' or 'runc')
-
-        Raises:
-            RuntimeUnavailableError: If strict mode and gVisor unavailable
-        """
-        requested_runtime = self.config.container_runtime
-        security_mode = self.config.security_mode
-
-        # If runc is explicitly requested, allow it (user knows what they're doing)
-        if requested_runtime == "runc":
-            if security_mode == "strict":
-                raise RuntimeUnavailableError(
-                    "Cannot use 'runc' runtime in strict security mode. "
-                    "Use container_runtime='runsc' or set security_mode='permissive'."
-                )
-            logger.warning(
-                "Using 'runc' runtime. This provides weaker isolation than gVisor. "
-                "DO NOT USE FOR UNTRUSTED CODE."
-            )
-            return "runc"
-
-        # gVisor requested (default) - check availability
-        if check_gvisor_available():
-            logger.info("Using gVisor (runsc) runtime for strong isolation")
-            return "runsc"
-
-        # gVisor not available
-        if security_mode == "strict":
-            raise RuntimeUnavailableError(
-                "gVisor (runsc) runtime is not available but required in strict mode. "
-                "Install gVisor: https://gvisor.dev/docs/user_guide/install/ "
-                "Or set security_mode='permissive' to allow fallback to runc (NOT RECOMMENDED)."
-            )
-
-        # Permissive mode - fall back to runc with loud warning
-        logger.warning("=" * 60)
-        logger.warning("WARNING: gVisor not available, falling back to runc")
-        logger.warning("WARNING: This provides WEAKER ISOLATION")
-        logger.warning("WARNING: DO NOT USE FOR UNTRUSTED CODE")
-        logger.warning("=" * 60)
-        return "runc"
+        """Resolve the runtime via the shared resolver (see ``resolve_runtime``)."""
+        return resolve_runtime(self.config)
 
     def _get_job_type(self, job_type_name: Optional[str]) -> JobType:
         """
@@ -282,10 +310,11 @@ class CodeExecutor:
 
         job_type = self.registry.get(name)
         if job_type is None:
-            if self.config.production_mode:
-                raise ValueError(f"Job type '{name}' not found (production mode)")
-            logger.warning(f"Job type '{name}' not found, using default")
-            return DEFAULT_JOB_TYPE
+            # Never silently fall back to DEFAULT_JOB_TYPE when the caller
+            # named an explicit type. They may be relying on different
+            # isolation, resources, or dependencies than 'default' has, and
+            # silently swapping would weaken the contract they asked for.
+            raise ValueError(f"Job type {name!r} not found")
 
         return job_type
 
@@ -311,7 +340,10 @@ class CodeExecutor:
                 - error: Error message (if failed)
                 - job_type: Name of job type used
         """
-        job_id = job.get("id", str(int(time.time() * 1000)))
+        # The id becomes the container name, which must be unique on the
+        # daemon. A bare millisecond timestamp collides when jobs race within
+        # the same millisecond, so append a random suffix to the fallback.
+        job_id = job.get("id") or f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
 
         # Get job type configuration
         job_type = self._get_job_type(job.get("job_type"))
@@ -787,9 +819,22 @@ class CodeExecutor:
                 "exit_code": -1,
             }
 
-        # Determine which image to use
-        # Use custom base_image if specified, otherwise use default executor
-        # Dependencies are installed at runtime via TAKO_REQUIREMENTS env var
+        # Merge job_type requirements with extra_requirements
+        all_requirements = list(job_type.requirements) if job_type.requirements else []
+        if extra_requirements:
+            all_requirements.extend(extra_requirements)
+
+        # Determine which image to use.
+        # Order of preference:
+        #   1. job_type.base_image — explicit per-type override
+        #   2. The pre-built tako-vm-{name}:latest if it exists AND no
+        #      extra_requirements were passed at runtime (those couldn't
+        #      possibly be baked in). Using the pre-built image lets
+        #      network_enabled=false stay honored — no runtime uv install
+        #      means no need to drop to --network=bridge.
+        #   3. The default code-executor image (deps install at runtime
+        #      via TAKO_REQUIREMENTS in entrypoint.sh).
+        use_prebuilt = False
         if job_type.base_image:
             if not validate_docker_image(job_type.base_image):
                 return {
@@ -800,23 +845,29 @@ class CodeExecutor:
                     "exit_code": -1,
                 }
             image_name = job_type.base_image
+        elif not extra_requirements and docker_image_exists(job_type.image_name):
+            image_name = job_type.image_name
+            use_prebuilt = True
+            logger.debug(
+                "Using pre-built image %s for job type '%s' (network=%s)",
+                image_name,
+                job_type.name,
+                "bridge" if job_type.network_enabled else "none",
+            )
         else:
             image_name = self.docker_image
 
-        # Merge job_type requirements with extra_requirements
-        all_requirements = list(job_type.requirements) if job_type.requirements else []
-        if extra_requirements:
-            all_requirements.extend(extra_requirements)
-
-        # Check if runtime deps require network access
-        has_runtime_deps = bool(all_requirements)
+        # When using a pre-built image, deps are baked in — no runtime
+        # install step, no need for the uv cache mount, no need to relax
+        # network isolation.
+        has_runtime_deps = bool(all_requirements) and not use_prebuilt
         needs_network_for_deps = has_runtime_deps and not job_type.network_enabled
 
         if needs_network_for_deps:
             logger.warning(
                 f"Job type '{job_type.name}' has requirements but network_enabled=false. "
                 "Using bridge network for dependency installation. "
-                "For true network isolation, use pre-built images via 'tako-vm build'."
+                "For true network isolation, pre-build via POST /job-types/{name}/build."
             )
 
         # Generate container name for tracking (allows cleanup on timeout)
@@ -910,8 +961,9 @@ class CodeExecutor:
                 continue
             cmd.append(f"--env={key}={value}")
 
-        # Pass requirements for runtime installation via uv
-        if all_requirements:
+        # Pass requirements for runtime installation via uv. Skipped when
+        # we're using a pre-built image (deps already baked in).
+        if has_runtime_deps:
             # Check requirements limit to prevent env var overflow
             if len(all_requirements) > MAX_REQUIREMENTS:
                 logger.error(

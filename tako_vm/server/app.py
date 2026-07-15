@@ -39,6 +39,7 @@ from tako_vm.server.correlation import (
 )
 from tako_vm.server.limits import ApiProtectionMiddleware
 from tako_vm.server.queue import WorkerPool
+from tako_vm.server.sessions import SessionManager, create_sessions_router
 from tako_vm.storage import ExecutionStorage
 
 # Configure logging with correlation ID support
@@ -121,10 +122,12 @@ class AppState:
     storage: ExecutionStorage
     worker_pool: WorkerPool
     idempotency_locks: IdempotencyLockManager
+    session_manager: SessionManager
 
 
 state = AppState()
 state.idempotency_locks = IdempotencyLockManager()
+state.session_manager = SessionManager()
 
 
 def _get_runtime_config() -> TakoVMConfig:
@@ -203,6 +206,7 @@ async def lifespan(app: FastAPI):
         pass
     await state.worker_pool.stop()
     await state.storage.close()
+    state.session_manager.shutdown()
 
 
 app = FastAPI(
@@ -217,6 +221,9 @@ app.add_middleware(ApiProtectionMiddleware, config_getter=_get_runtime_config)
 
 # Add correlation ID middleware (must be added before other middleware)
 app.add_middleware(CorrelationIdMiddleware)
+
+# Roaming-agent session endpoints
+app.include_router(create_sessions_router(state.session_manager))
 
 
 # Request/Response Models
@@ -785,6 +792,15 @@ async def execute_code(request: ExecuteRequest):
             job_type=result.get("job_type"),
         )
 
+    except ValueError as e:
+        # Client-side errors (unknown job_type, code too large, etc.) —
+        # never silently swap to default isolation; surface as 400 so the
+        # caller can fix the request rather than running with a different
+        # security profile than they asked for.
+        logger.info("Job %s rejected: %s", job_id, str(e))
+        raise HTTPException(
+            status_code=400, detail=sanitize_error(str(e))
+        ) from e
     except Exception as e:
         logger.error("Job %s error: %s", job_id, str(e), exc_info=True)
         # Sanitize error message to avoid leaking sensitive info
