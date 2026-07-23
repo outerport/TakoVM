@@ -20,7 +20,7 @@ from tako_vm.execution.worker import (
     reset_gvisor_check,
     resolve_runtime,
 )
-from tako_vm.session import LocalTakoSession, build_session_docker_command
+from tako_vm.session import SESSION_LABEL, LocalTakoSession, build_session_docker_command
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +32,7 @@ def reset_caches():
     reset_config()
 
 
-def _session_cmd(runtime):
+def _session_cmd(runtime, config=None):
     return build_session_docker_command(
         container_name="tako-session-test",
         workspace=Path("/tmp/tako-vm-workspace/sessions/test"),
@@ -42,6 +42,7 @@ def _session_cmd(runtime):
         network_enabled=False,
         workspace_mount="/workspace",
         enable_cap_restrictions=True,
+        config=config or TakoVMConfig(),
         runtime=runtime,
     )
 
@@ -96,6 +97,21 @@ class TestSessionCommandRuntimeFlag:
         assert "--read-only" in cmd
         assert "--cap-drop=ALL" in cmd
         assert "--network=none" in cmd
+        assert "--user=1000:1000" in cmd
+        assert f"--label={SESSION_LABEL}" in cmd
+
+    def test_parity_hardening_flags_present(self):
+        """Sessions must carry the same ulimits/pids/noexec-tmpfs the one-shot
+        job path applies -- the gap that let session code exhaust host disk."""
+        limits = TakoVMConfig().container_limits
+        cmd = _session_cmd("runsc")
+        assert f"--ulimit=fsize={limits.fsize}" in cmd
+        assert f"--ulimit=nproc={limits.nproc_soft}:{limits.nproc_hard}" in cmd
+        assert f"--ulimit=nofile={limits.nofile_soft}:{limits.nofile_hard}" in cmd
+        assert f"--pids-limit={limits.pids_limit}" in cmd
+        # Sessions never install deps at runtime, so /tmp is noexec.
+        assert any(a.startswith("--tmpfs=/tmp:rw,noexec,") for a in cmd)
+        assert not any("exec," in a and "noexec" not in a for a in cmd if a.startswith("--tmpfs"))
 
 
 class TestSessionStartAppliesRuntime:
