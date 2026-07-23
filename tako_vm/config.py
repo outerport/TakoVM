@@ -125,10 +125,6 @@ class SessionConfig(BaseModel):
     # How often the background reaper runs.
     reaper_interval_seconds: int = Field(default=120, ge=5, le=3600)
 
-    # Timeout for the `docker run` that starts a session container, so a hung
-    # daemon or slow image pull cannot block create() forever.
-    start_timeout_seconds: int = Field(default=120, ge=5, le=600)
-
     # When False (default) the HTTP session plane forces the hardened profile:
     # cap-drop on, network off, and image restricted to the allowlist. Only an
     # operator who trusts every network client of the server should set True.
@@ -415,13 +411,6 @@ class TakoVMConfig(BaseModel):
         if v not in valid_modes:
             raise ValueError(f"security_mode must be one of: {', '.join(sorted(valid_modes))}")
         return v
-
-    # Prefer a pre-built ``tako-vm-{name}:latest`` image when one exists and the
-    # job passed no extra_requirements. Selection is by tag existence only, so a
-    # stale image (rebuilt job-type definition, not re-imaged) would be reused;
-    # operators who rebuild out-of-band can set this False to always install deps
-    # at runtime from the current job-type config instead.
-    prefer_prebuilt_images: bool = Field(default=True)
 
     # Container limits (new!)
     container_limits: ContainerLimits = Field(default_factory=ContainerLimits)

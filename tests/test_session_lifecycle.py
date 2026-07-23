@@ -95,15 +95,16 @@ class TestEviction:
         assert named.workspace not in evicted
 
 
-class TestStartTimeout:
-    def test_timeout_cleans_up_and_raises(self, monkeypatch, patched):
+class TestCreateFailureCleanup:
+    def test_docker_error_releases_reserved_slot(self, monkeypatch, patched):
+        """A docker failure during create must release the reserved slot so it
+        doesn't count against the concurrency cap or leave a phantom entry."""
         manager = SessionManager()
 
         def boom(*a, **k):
-            raise subprocess.TimeoutExpired(cmd="docker run", timeout=1)
+            raise subprocess.SubprocessError("docker run blew up")
 
         monkeypatch.setattr(sessions_mod.subprocess, "run", boom)
-        with pytest.raises(subprocess.TimeoutExpired):
+        with pytest.raises(subprocess.SubprocessError):
             _create(manager, "slow")
-        # registry not left with a phantom entry
         assert manager.list_ids() == []

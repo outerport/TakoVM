@@ -47,7 +47,7 @@ from tako_vm.config import TakoVMConfig, get_config
 from tako_vm.constants import DEFAULT_IMAGE, SANDBOX_GID, SANDBOX_UID
 from tako_vm.execution.docker import generate_container_name, is_native_linux, kill_container
 from tako_vm.execution.worker import resolve_runtime
-from tako_vm.security import cap_output, validate_env_key, validate_env_value
+from tako_vm.security import cap_output
 
 logger = logging.getLogger(__name__)
 
@@ -172,44 +172,23 @@ def run_docker_exec(
 ) -> SessionExecResult:
     """Run ``docker exec ... bash -c "command"`` and return the result.
 
-    The command is untrusted, so three defenses are applied that the raw
-    ``docker exec`` did not have:
-
-    - The command is wrapped in a coreutils ``timeout`` so a runaway process is
-      killed *inside* the container. A bare ``subprocess.run(timeout=...)`` only
-      kills the ``docker exec`` client; the in-container process keeps running
-      and eventually exhausts the ``--pids-limit`` cap, bricking the session.
-    - Caller-supplied ``env`` is validated exactly as the job path validates it
-      (``validate_env_key`` / ``validate_env_value``); unsafe entries are skipped
-      rather than forwarded to ``docker exec -e``.
-    - stdout/stderr are capped to ``max_output_bytes`` (default
-      ``max_stdout_bytes`` from config) so a flood such as ``yes`` cannot OOM the
-      host process that drains the pipe (the container memory cgroup does not
-      bound the host-side read buffer).
+    stdout/stderr are capped to ``max_output_bytes`` (default ``max_stdout_bytes``
+    from config) so a flood such as ``yes`` cannot OOM the host process draining
+    the pipe (the container memory cgroup does not bound the host-side read
+    buffer, which grows in the server/worker process, not the container).
     """
     cap = max_output_bytes if max_output_bytes is not None else get_config().max_stdout_bytes
 
     exec_cmd: List[str] = ["docker", "exec", "-w", cwd]
     if env:
         for k, v in env.items():
-            if not validate_env_key(k):
-                logger.warning("Skipping session env var with invalid key: %r", k)
-                continue
-            if not validate_env_value(v):
-                logger.warning("Skipping session env var with unsafe value (key=%r)", k)
-                continue
             exec_cmd.extend(["-e", f"{k}={v}"])
-    # ``timeout -k 5 <n>s`` sends TERM at n seconds, then KILL 5s later; exit
-    # code 124 signals the command was timed out.
-    exec_cmd.extend([container_name, "timeout", "-k", "5", f"{timeout}s", "bash", "-c", command])
+    exec_cmd.extend([container_name, "bash", "-c", command])
 
     start = time.time()
-    # Outer backstop, larger than the in-container timeout + kill grace so the
-    # container-side timeout fires first in the normal case.
-    outer_timeout = timeout + 15
     try:
         proc = subprocess.run(
-            exec_cmd, capture_output=True, text=True, timeout=outer_timeout, check=False
+            exec_cmd, capture_output=True, text=True, timeout=timeout, check=False
         )
         duration_ms = int((time.time() - start) * 1000)
         return SessionExecResult(
@@ -217,12 +196,9 @@ def run_docker_exec(
             stderr=cap_output(proc.stderr, cap),
             exit_code=proc.returncode,
             duration_ms=duration_ms,
-            timed_out=proc.returncode == 124,
+            timed_out=False,
         )
     except subprocess.TimeoutExpired as e:
-        # The in-container timeout never fired (missing binary / daemon hang);
-        # kill the container so the process can't linger and hold pids.
-        kill_container(container_name)
         duration_ms = int((time.time() - start) * 1000)
         stdout = e.stdout.decode("utf-8", "replace") if e.stdout else ""
         stderr = e.stderr.decode("utf-8", "replace") if e.stderr else ""

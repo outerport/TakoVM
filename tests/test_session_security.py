@@ -138,34 +138,10 @@ class TestRunDockerExecHardening:
         monkeypatch.setattr("tako_vm.session.subprocess.run", fake_run)
         return seen
 
-    def test_command_wrapped_in_timeout(self, monkeypatch):
-        seen = self._capture(monkeypatch)
-        run_docker_exec("c1", "echo hi", "/workspace", timeout=30)
-        cmd = seen["cmd"]
-        assert "timeout" in cmd and "-k" in cmd and "30s" in cmd
-        assert cmd[-3:] == ["bash", "-c", "echo hi"]
-
     def test_output_is_capped(self, monkeypatch):
+        # A flood must not reach the caller uncapped (it would grow the host
+        # process's read buffer, not the container cgroup).
         self._capture(monkeypatch, stdout="A" * 10_000)
         res = run_docker_exec("c1", "cmd", "/workspace", timeout=5, max_output_bytes=100)
         assert len(res.stdout.encode()) <= 200
         assert "TRUNCATED" in res.stdout
-
-    def test_unsafe_env_skipped(self, monkeypatch):
-        seen = self._capture(monkeypatch)
-        run_docker_exec(
-            "c1",
-            "cmd",
-            "/workspace",
-            timeout=5,
-            env={"GOOD": "1", "BAD KEY": "x", "INJECT": "a`b`"},
-        )
-        cmd = seen["cmd"]
-        assert "GOOD=1" in cmd
-        assert not any("BAD KEY" in a for a in cmd)
-        assert not any(a.startswith("INJECT=") for a in cmd)
-
-    def test_exit_124_maps_to_timed_out(self, monkeypatch):
-        self._capture(monkeypatch, returncode=124)
-        res = run_docker_exec("c1", "sleep 999", "/workspace", timeout=1)
-        assert res.timed_out is True

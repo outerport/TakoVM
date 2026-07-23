@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from tako_vm.config import TakoVMConfig, get_config
 from tako_vm.constants import DEFAULT_IMAGE
 from tako_vm.execution.docker import generate_container_name, kill_container
-from tako_vm.execution.worker import RuntimeUnavailableError, resolve_runtime
+from tako_vm.execution.worker import resolve_runtime
 from tako_vm.security import validate_docker_image
 from tako_vm.session import (
     DEFAULT_SESSION_TIMEOUT,
@@ -242,17 +242,13 @@ class SessionManager:
                 container_name,
                 resolved,
             )
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=config.session.start_timeout_seconds,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, Exception):
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except Exception:
+            # Release the reserved slot and kill any container that started,
+            # so a failed create can't leak a session or a container.
             with self._lock:
                 self._sessions.pop(session_id, None)
-            kill_container(container_name)  # in case it started despite the error
+            kill_container(container_name)
             raise
 
         if result.returncode != 0:
@@ -502,8 +498,6 @@ def create_sessions_router(manager: SessionManager) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(e))
         except SessionLimitExceededError as e:
             raise HTTPException(status_code=429, detail=str(e))
-        except RuntimeUnavailableError as e:
-            raise HTTPException(status_code=503, detail=str(e))
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=str(e))
         return CreateSessionResponse(
