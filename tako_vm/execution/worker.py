@@ -845,7 +845,11 @@ class CodeExecutor:
                     "exit_code": -1,
                 }
             image_name = job_type.base_image
-        elif not extra_requirements and docker_image_exists(job_type.image_name):
+        elif (
+            self.config.prefer_prebuilt_images
+            and not extra_requirements
+            and docker_image_exists(job_type.image_name)
+        ):
             image_name = job_type.image_name
             use_prebuilt = True
             logger.debug(

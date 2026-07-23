@@ -99,6 +99,50 @@ class ContainerLimits(BaseModel):
         return self
 
 
+class SessionConfig(BaseModel):
+    """Policy and limits for long-lived sandbox sessions.
+
+    Sessions outlive a single exec and are reachable (via the HTTP plane)
+    by an unauthenticated client, so these bounds are load-bearing: they
+    cap how many containers a caller can spawn, how long an abandoned one
+    survives, and which isolation knobs a network caller may relax.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    # Hard cap on concurrently live sessions on this server. create() rejects
+    # once the registry is full, so an unauthenticated caller cannot spawn
+    # containers without bound.
+    max_sessions: int = Field(default=50, ge=1, le=100000)
+
+    # Absolute lifetime: the reaper kills a session this many seconds after
+    # creation regardless of activity.
+    max_age_seconds: int = Field(default=3600, ge=60, le=604800)
+
+    # Idle timeout: a session with no exec for this long is reaped.
+    idle_timeout_seconds: int = Field(default=1800, ge=60, le=604800)
+
+    # How often the background reaper runs.
+    reaper_interval_seconds: int = Field(default=120, ge=5, le=3600)
+
+    # Timeout for the `docker run` that starts a session container, so a hung
+    # daemon or slow image pull cannot block create() forever.
+    start_timeout_seconds: int = Field(default=120, ge=5, le=600)
+
+    # When False (default) the HTTP session plane forces the hardened profile:
+    # cap-drop on, network off, and image restricted to the allowlist. Only an
+    # operator who trusts every network client of the server should set True.
+    allow_privileged: bool = Field(default=False)
+
+    # Images an HTTP caller may request. The default image is always allowed.
+    # Ignored when allow_privileged is True.
+    image_allowlist: List[str] = Field(default_factory=list)
+
+    # Upper bounds for caller-requested resources on the HTTP path.
+    max_memory_mb: int = Field(default=4096, ge=64, le=1048576)
+    max_cpu_limit: float = Field(default=4.0, gt=0, le=256.0)
+
+
 class JobTypeGPUConfig(BaseModel):
     """GPU configuration for a job type."""
 
@@ -372,8 +416,18 @@ class TakoVMConfig(BaseModel):
             raise ValueError(f"security_mode must be one of: {', '.join(sorted(valid_modes))}")
         return v
 
+    # Prefer a pre-built ``tako-vm-{name}:latest`` image when one exists and the
+    # job passed no extra_requirements. Selection is by tag existence only, so a
+    # stale image (rebuilt job-type definition, not re-imaged) would be reused;
+    # operators who rebuild out-of-band can set this False to always install deps
+    # at runtime from the current job-type config instead.
+    prefer_prebuilt_images: bool = Field(default=True)
+
     # Container limits (new!)
     container_limits: ContainerLimits = Field(default_factory=ContainerLimits)
+
+    # Long-lived session policy/limits.
+    session: SessionConfig = Field(default_factory=SessionConfig)
 
     # Job types (new - can be defined in main config)
     job_types: List[JobTypeConfig] = Field(default_factory=list)
