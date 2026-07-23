@@ -43,16 +43,27 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from tako_vm.config import get_config
+from tako_vm.config import TakoVMConfig, get_config
 from tako_vm.constants import DEFAULT_IMAGE, SANDBOX_GID, SANDBOX_UID
-from tako_vm.execution.docker import generate_container_name, kill_container
+from tako_vm.execution.docker import generate_container_name, is_native_linux, kill_container
 from tako_vm.execution.worker import resolve_runtime
+from tako_vm.security import cap_output
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WORKSPACE_MOUNT = "/workspace"
 DEFAULT_SESSION_TIMEOUT = 60
 DEFAULT_SERVER_URL = os.environ.get("TAKO_SERVER_URL", "http://localhost:8000")
+
+# Docker label applied to every session container so orphans (survivors of a
+# non-graceful server restart) can be found and reaped by `docker ps --filter`.
+SESSION_LABEL = "tako-vm-session"
+
+# Workspace reconciliation modes. Directories get setgid so new entries inherit
+# the sandbox gid; group-write (not world) because the sandbox uid is in the
+# sandbox group.
+WORKSPACE_DIR_MODE = 0o2770
+WORKSPACE_FILE_MODE = 0o0660
 
 
 @dataclass
@@ -66,6 +77,20 @@ class SessionExecResult:
     timed_out: bool = False
 
 
+def _reject_mount_csv_metachars(value: str, field: str) -> None:
+    """Guard a value interpolated into the ``--mount`` CSV.
+
+    ``--mount=type=bind,source={workspace},target={workspace_mount}`` is a
+    comma-separated ``key=value`` list. A ``,`` or ``=`` in either interpolated
+    value can inject a second ``source=`` and re-point the bind mount — e.g.
+    ``workspace_mount="/workspace,source=/"`` mounts the host root. Docker's CSV
+    parser honours the later ``source=``, so this is a real host-escape, not a
+    parse error. Neither value may contain CSV or shell/whitespace metacharacters.
+    """
+    if any(c in value for c in ",=\n\r\t ") or "\x00" in value:
+        raise ValueError(f"invalid {field} {value!r}: contains disallowed characters")
+
+
 def build_session_docker_command(
     container_name: str,
     workspace: Path,
@@ -75,19 +100,32 @@ def build_session_docker_command(
     network_enabled: bool,
     workspace_mount: str,
     enable_cap_restrictions: bool,
+    config: TakoVMConfig,
     runtime: Optional[str] = None,
 ) -> List[str]:
     """Assemble the ``docker run -d`` command for a session container.
 
-    Shared by the local backend and the server-side session manager so
-    both end up with identical sandbox semantics.
+    Shared by the local backend and the server-side session manager so both
+    apply the same hardening the one-shot job path
+    (:meth:`CodeExecutor._run_container`) uses: cap-drop, the gVisor runtime,
+    the seccomp allowlist, the configured nofile/nproc/fsize ulimits and pids
+    cap, and a noexec /tmp. Session containers never install deps at runtime
+    (they run ``/bin/sleep``), so /tmp is always ``noexec`` and its size comes
+    from config rather than a hardcoded literal.
     """
+    _reject_mount_csv_metachars(str(workspace), "workspace")
+    _reject_mount_csv_metachars(workspace_mount, "workspace_mount")
+    if not workspace_mount.startswith("/"):
+        raise ValueError(f"workspace_mount must be an absolute path, got {workspace_mount!r}")
+
+    limits = config.container_limits
     cmd = [
         "docker",
         "run",
         "-d",
         "--rm",
         f"--name={container_name}",
+        f"--label={SESSION_LABEL}",
         "--init",
         "--read-only",
         f"--user={SANDBOX_UID}:{SANDBOX_GID}",
@@ -107,13 +145,20 @@ def build_session_docker_command(
             f"--memory={memory_limit}",
             f"--memory-swap={memory_limit}",
             f"--cpus={cpu_limit}",
-            "--pids-limit=200",
-            "--tmpfs=/tmp:rw,exec,nosuid,size=300m",
+            f"--pids-limit={limits.pids_limit}",
+            f"--ulimit=nofile={limits.nofile_soft}:{limits.nofile_hard}",
+            f"--ulimit=nproc={limits.nproc_soft}:{limits.nproc_hard}",
+            f"--ulimit=fsize={limits.fsize}",
+            f"--tmpfs=/tmp:rw,noexec,nosuid,size={limits.tmpfs_size}",
             f"--mount=type=bind,source={workspace},target={workspace_mount}",
-            image,
-            "infinity",
         ]
     )
+    # Same seccomp allowlist the job path applies (native Linux only; Docker
+    # Desktop chokes on custom profiles).
+    if config.enable_seccomp and config.seccomp_profile_path:
+        if is_native_linux() and config.seccomp_profile_path.exists():
+            cmd.append(f"--security-opt=seccomp={config.seccomp_profile_path}")
+    cmd.extend([image, "infinity"])
     return cmd
 
 
@@ -123,8 +168,17 @@ def run_docker_exec(
     cwd: str,
     timeout: int,
     env: Optional[Dict[str, str]] = None,
+    max_output_bytes: Optional[int] = None,
 ) -> SessionExecResult:
-    """Run ``docker exec ... bash -c "command"`` and return the result."""
+    """Run ``docker exec ... bash -c "command"`` and return the result.
+
+    stdout/stderr are capped to ``max_output_bytes`` (default ``max_stdout_bytes``
+    from config) so a flood such as ``yes`` cannot OOM the host process draining
+    the pipe (the container memory cgroup does not bound the host-side read
+    buffer, which grows in the server/worker process, not the container).
+    """
+    cap = max_output_bytes if max_output_bytes is not None else get_config().max_stdout_bytes
+
     exec_cmd: List[str] = ["docker", "exec", "-w", cwd]
     if env:
         for k, v in env.items():
@@ -138,21 +192,41 @@ def run_docker_exec(
         )
         duration_ms = int((time.time() - start) * 1000)
         return SessionExecResult(
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=cap_output(proc.stdout, cap),
+            stderr=cap_output(proc.stderr, cap),
             exit_code=proc.returncode,
             duration_ms=duration_ms,
             timed_out=False,
         )
     except subprocess.TimeoutExpired as e:
         duration_ms = int((time.time() - start) * 1000)
+        stdout = e.stdout.decode("utf-8", "replace") if e.stdout else ""
+        stderr = e.stderr.decode("utf-8", "replace") if e.stderr else ""
         return SessionExecResult(
-            stdout=e.stdout.decode("utf-8", "replace") if e.stdout else "",
-            stderr=e.stderr.decode("utf-8", "replace") if e.stderr else "",
+            stdout=cap_output(stdout, cap),
+            stderr=cap_output(stderr, cap),
             exit_code=-1,
             duration_ms=duration_ms,
             timed_out=True,
         )
+
+
+def _reconcile_workspace_entry(path: Path, is_dir: bool) -> None:
+    """Give one workspace entry the sandbox group + group-write, never following
+    a symlink (so a link planted by the sandbox user can't redirect the op onto
+    a host path)."""
+    try:
+        # lchown: operate on the link itself, not its target.
+        os.chown(path, -1, SANDBOX_GID, follow_symlinks=False)
+    except (PermissionError, OSError):
+        logger.warning("Could not chgrp %s to gid %d", path, SANDBOX_GID)
+    # os.chmod can't skip-follow on Linux for a path, so never chmod a symlink.
+    if path.is_symlink():
+        return
+    try:
+        os.chmod(path, WORKSPACE_DIR_MODE if is_dir else WORKSPACE_FILE_MODE)
+    except (PermissionError, OSError):
+        logger.warning("Could not chmod %s", path)
 
 
 def ensure_workspace_writable(workspace: Path) -> None:
@@ -160,45 +234,40 @@ def ensure_workspace_writable(workspace: Path) -> None:
 
     The container runs as SANDBOX_UID:SANDBOX_GID, but files placed into the
     workspace on the *host* (workspace hydrate, the fs_write / fs_edit roaming
-    tools) are written by the worker process, which typically runs as root.
-    A root-owned 0644 file cannot be overwritten (or chmod-ed) by the uid-1000
-    container, which is what breaks cross-turn notebook/script re-writes.
+    tools) are written by the worker process, often as root. A root-owned 0644
+    file or dir cannot be overwritten (or chmod-ed) by the uid-1000 container,
+    which is what breaks cross-turn notebook/script re-writes.
 
-    Reconcile the two by giving the workspace directory the sandbox group and
-    the setgid bit: every file/subdirectory created inside it then inherits
-    ``gid == SANDBOX_GID`` regardless of which process writes it. Combined with
-    the worker running at umask 002 (so host writes are group-writable, 0664),
-    the sandbox uid — a member of SANDBOX_GID — can read, overwrite, and delete
-    every workspace file. setgid propagates into nested directories on Linux,
-    so this one call at session creation covers the whole tree.
+    Reconcile by walking the whole tree and giving *every existing entry* the
+    sandbox group and group-write explicitly — chgrp to SANDBOX_GID, chmod
+    directories to ``0o2770`` (setgid) and files to ``0o0660``. The mode is
+    group-only (not world-writable) because the sandbox uid is a member of
+    SANDBOX_GID. Group-write is set here directly rather than relying on the
+    writer's umask.
+
+    Scope note: the setgid bit makes *newly created* subdirectories inherit the
+    gid, but not the group-write bit. So a host process that writes into the
+    workspace *after* this call (e.g. a between-turn hydrate) must itself write
+    group-writable — run the worker at ``umask 002``, ``chmod 0o660`` after each
+    write, or call this again — otherwise that new file lands group read-only
+    and the sandbox user cannot overwrite it. This function guarantees the
+    invariant only for entries that exist when it runs.
     """
+    if workspace.is_symlink():
+        raise ValueError(f"Workspace must not be a symlink: {workspace}")
     if not workspace.exists():
         workspace.mkdir(parents=True)
     if not workspace.is_dir():
         raise ValueError(f"Workspace is not a directory: {workspace}")
-    try:
-        # chgrp to the sandbox group (leave the owner untouched). Only a
-        # privileged worker can set a group it isn't a member of; when the
-        # worker already runs as the sandbox uid this is a no-op it's allowed
-        # to make. Best-effort: dev setups running the worker as the sandbox
-        # user already produce sandbox-owned files.
-        os.chown(workspace, -1, SANDBOX_GID)
-    except (PermissionError, OSError):
-        logger.warning(
-            "Could not chgrp workspace %s to gid %d; host-written files may not "
-            "be group-writable by the sandbox user.",
-            workspace,
-            SANDBOX_GID,
-        )
-    try:
-        # setgid (02000) + rwx for owner/group/other. The setgid bit is the
-        # load-bearing part; 0o777 keeps local-dev permissive.
-        os.chmod(workspace, 0o2777)
-    except PermissionError:
-        logger.warning(
-            "Could not chmod workspace %s to 2777; writes from the sandbox user may fail.",
-            workspace,
-        )
+
+    _reconcile_workspace_entry(workspace, is_dir=True)
+    # followlinks=False so we never descend through a symlinked directory.
+    for root, dirs, files in os.walk(workspace, followlinks=False):
+        root_path = Path(root)
+        for name in dirs:
+            _reconcile_workspace_entry(root_path / name, is_dir=True)
+        for name in files:
+            _reconcile_workspace_entry(root_path / name, is_dir=False)
 
 
 class LocalTakoSession:
@@ -248,7 +317,8 @@ class LocalTakoSession:
         self.container_name = self._container_name_override or generate_container_name(
             "tako-session"
         )
-        runtime = resolve_runtime(get_config())
+        config = get_config()
+        runtime = resolve_runtime(config)
         cmd = build_session_docker_command(
             container_name=self.container_name,
             workspace=self.workspace,
@@ -258,6 +328,7 @@ class LocalTakoSession:
             network_enabled=self.network_enabled,
             workspace_mount=self.workspace_mount,
             enable_cap_restrictions=self.enable_cap_restrictions,
+            config=config,
             runtime=runtime,
         )
         logger.debug("Starting session container: %s", " ".join(cmd))

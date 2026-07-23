@@ -39,7 +39,11 @@ from tako_vm.server.correlation import (
 )
 from tako_vm.server.limits import ApiProtectionMiddleware
 from tako_vm.server.queue import WorkerPool
-from tako_vm.server.sessions import SessionManager, create_sessions_router
+from tako_vm.server.sessions import (
+    SessionManager,
+    create_sessions_router,
+    sweep_orphaned_session_containers,
+)
 from tako_vm.storage import ExecutionStorage
 
 # Configure logging with correlation ID support
@@ -158,6 +162,25 @@ async def _periodic_cleanup(storage: ExecutionStorage, record_ttl_days: int, dlq
             logger.error(f"Periodic cleanup error: {e}", exc_info=True)
 
 
+async def _session_reaper(manager: SessionManager, interval_seconds: int):
+    """Background task: reap sessions past their lifetime/idle timeout.
+
+    Session containers run ``sleep infinity`` with no self-timeout, so an
+    abandoned session (client crashed, never called DELETE) would otherwise
+    live until server shutdown and hold its container + workspace."""
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            reaped = await asyncio.to_thread(manager.reap_expired)
+            if reaped:
+                logger.info("Session reaper: reaped %d expired session(s)", reaped)
+        except asyncio.CancelledError:
+            logger.info("Session reaper task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Session reaper error: {e}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
@@ -167,6 +190,10 @@ async def lifespan(app: FastAPI):
     # Run startup cleanup (orphaned containers, health check)
     cleanup_results = startup_cleanup()
     logger.info(f"Startup cleanup: {cleanup_results}")
+
+    # Reap session containers orphaned by a previous non-graceful shutdown. The
+    # in-memory registry is empty here, so every labelled container is an orphan.
+    sweep_orphaned_session_containers()
 
     state.config = get_config()
 
@@ -193,6 +220,11 @@ async def lifespan(app: FastAPI):
         _periodic_cleanup(state.storage, state.config.execution_record_ttl_days)
     )
 
+    # Start the session reaper (kills expired long-lived sessions).
+    reaper_task = asyncio.create_task(
+        _session_reaper(state.session_manager, state.config.session.reaper_interval_seconds)
+    )
+
     logger.info(f"Tako VM ready (production_mode={state.config.production_mode})")
 
     yield
@@ -200,10 +232,12 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Tako VM API server...")
     cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+    reaper_task.cancel()
+    for task in (cleanup_task, reaper_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     await state.worker_pool.stop()
     await state.storage.close()
     state.session_manager.shutdown()
@@ -798,9 +832,7 @@ async def execute_code(request: ExecuteRequest):
         # caller can fix the request rather than running with a different
         # security profile than they asked for.
         logger.info("Job %s rejected: %s", job_id, str(e))
-        raise HTTPException(
-            status_code=400, detail=sanitize_error(str(e))
-        ) from e
+        raise HTTPException(status_code=400, detail=sanitize_error(str(e))) from e
     except Exception as e:
         logger.error("Job %s error: %s", job_id, str(e), exc_info=True)
         # Sanitize error message to avoid leaking sensitive info
