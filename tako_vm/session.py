@@ -76,11 +76,14 @@ def build_session_docker_command(
     workspace_mount: str,
     enable_cap_restrictions: bool,
     runtime: Optional[str] = None,
+    tmpfs_size: str = "300m",
 ) -> List[str]:
     """Assemble the ``docker run -d`` command for a session container.
 
     Shared by the local backend and the server-side session manager so
-    both end up with identical sandbox semantics.
+    both end up with identical sandbox semantics. ``tmpfs_size`` sizes the
+    container's ``/tmp``, in docker's notation (``"300m"``, ``"1g"``); its
+    pages count against ``memory_limit``.
     """
     cmd = [
         "docker",
@@ -108,7 +111,7 @@ def build_session_docker_command(
             f"--memory-swap={memory_limit}",
             f"--cpus={cpu_limit}",
             "--pids-limit=200",
-            "--tmpfs=/tmp:rw,exec,nosuid,size=300m",
+            f"--tmpfs=/tmp:rw,exec,nosuid,size={tmpfs_size}",
             f"--mount=type=bind,source={workspace},target={workspace_mount}",
             image,
             "infinity",
@@ -218,6 +221,7 @@ class LocalTakoSession:
         workspace_mount: str = DEFAULT_WORKSPACE_MOUNT,
         enable_cap_restrictions: bool = True,
         container_name: Optional[str] = None,
+        tmpfs_size: str = "300m",
     ) -> None:
         self.workspace = workspace.resolve()
         self.image = image
@@ -226,6 +230,7 @@ class LocalTakoSession:
         self.network_enabled = network_enabled
         self.workspace_mount = workspace_mount
         self.enable_cap_restrictions = enable_cap_restrictions
+        self.tmpfs_size = tmpfs_size
         # When the caller supplies a name, start() uses it instead of a
         # generated one -- letting the caller kill the container by a name it
         # already knows even if start() never returns (e.g. a queue/result
@@ -259,6 +264,7 @@ class LocalTakoSession:
             workspace_mount=self.workspace_mount,
             enable_cap_restrictions=self.enable_cap_restrictions,
             runtime=runtime,
+            tmpfs_size=self.tmpfs_size,
         )
         logger.debug("Starting session container: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
